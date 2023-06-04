@@ -1,2 +1,4 @@
 (library
- (name language_server))
+ (name language_server)
+ (public_name language_server)
+ (libraries lsp lwt lwt.unix))

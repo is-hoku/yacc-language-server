@@ -1,4 +1,4 @@
 (executable
  (public_name language_server)
  (name main)
- (libraries language_server))
+ (libraries language_server lsp lwt))

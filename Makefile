@@ -1,6 +1,6 @@
 build:
 	dune build
-exec:
+exec: build
 	dune exec bin/main.exe
 install:
 	opam install . --deps-only --working-dir
