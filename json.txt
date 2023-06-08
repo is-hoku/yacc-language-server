@@ -1,1 +1,0 @@
-{"id":123,"params":{"test_int":123,"test_string":"test"},"method":"Test JSON-RPC","jsonrpc":"2.0"}

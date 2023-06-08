@@ -1,10 +1,9 @@
 open Language_server.Io
 open Lwt.Syntax
 
-(*let read_input_and_write_to_file file_path =*)
-(*let* input = Lwt_io.open_file ~mode:Lwt_io.Input file_path in*)
 let main () =
-  let input = Lwt_io.stdin in
+  print_endline (Unix.getcwd ());
+  let* input = Lwt_io.open_file ~mode:Lwt_io.Input "packet.txt" in
   let output = Lwt_io.stdout in
 
   let rec read_and_write () =
@@ -20,6 +19,4 @@ let main () =
   let* () = Lwt_io.close output in
   Lwt.return_unit
 
-(*let file_path = "json.txt"
-  let () = Lwt_main.run (read_input_and_write_to_file file_path)*)
 let () = Lwt_main.run (main ())

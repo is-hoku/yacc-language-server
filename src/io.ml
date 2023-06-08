@@ -1,4 +1,4 @@
-open Lwt
+open Lwt.Syntax
 
 module IO =
   Lsp.Io.Make
@@ -18,17 +18,20 @@ module IO =
 
       let read_line input =
         Lwt.catch
-          (fun () -> Lwt_io.read_line_opt input)
+          (fun () ->
+            let* line = Lwt_io.read_line input in
+            Lwt.return_some line)
           (function End_of_file -> Lwt.return_none | exn -> Lwt.fail exn)
 
       let read_exactly input len =
         let buffer = Bytes.create len in
         Lwt.catch
           (fun () ->
-            Lwt_io.read_into_exactly input buffer 0 len >>= fun () ->
-            Lwt.return (Some (Bytes.to_string buffer)))
+            let* () = Lwt_io.read_into_exactly input buffer 0 len in
+            Lwt.return_some (Bytes.to_string buffer))
           (function End_of_file -> Lwt.return_none | exn -> Lwt.fail exn)
 
       let write output line =
-        Lwt_io.write_line output line >>= fun () -> Lwt_io.flush output
+        let* () = Lwt_io.write_line output line in
+        Lwt_io.flush output
     end)

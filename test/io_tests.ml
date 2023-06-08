@@ -1,4 +1,5 @@
 open Language_server.Io
+open Lwt.Syntax
 
 module Lwt_io_run = struct
   type 'a t = 'a Lwt.t
@@ -46,3 +47,28 @@ let%expect_test "stdout" =
 
 
     {"id":123,"params":{"test_int":123,"test_string":"test"},"method":"Test JSON-RPC","jsonrpc":"2.0"}|}]
+
+let%expect_test "stdin" =
+  let main () =
+    let proj_dir =
+      match Sys.getenv_opt "YACC_LANGUAGE_SERVER" with
+      | None -> ""
+      | Some path -> path
+    in
+    let* input =
+      Lwt_io.open_file ~mode:Lwt_io.Input (proj_dir ^ "test/input1.txt")
+    in
+    let output = Lwt_io.stdout in
+    let* packet = IO.read input in
+    match packet with
+    | None -> Lwt.return_unit
+    | Some json -> IO.write output json
+  in
+  Lwt_main.run (main ());
+  [%expect
+    {|
+    Content-Length: 106
+    Content-Type: application/vscode-jsonrpc; charset=utf-8
+
+
+    {"id":1,"params":{"test_int":123,"test_string":"test"},"method":"textDocument/completion","jsonrpc":"2.0"}|}]
