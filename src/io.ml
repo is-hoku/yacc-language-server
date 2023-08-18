@@ -31,7 +31,9 @@ module IO =
             Lwt.return_some (Bytes.to_string buffer))
           (function End_of_file -> Lwt.return_none | exn -> Lwt.fail exn)
 
-      let write output line =
-        let* () = Lwt_io.write_line output line in
+      let write output lines =
+        let* () =
+          Lwt_list.iter_s (fun line -> Lwt_io.write_line output line) lines
+        in
         Lwt_io.flush output
     end)
