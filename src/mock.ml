@@ -1,19 +1,41 @@
+open Import
 open Io
 open Lwt.Syntax
 
 let send_request _ (input, output) =
-  print_endline "handling client";
-  let* input_file = Lwt_io.open_file ~mode:Lwt_io.Input "packet.txt" in
-
-  let rec read_and_write () =
-    let* result = IO.read input_file in
-    match result with
-    | None -> Lwt.return_unit
-    | Some packet ->
-        let* () = IO.write output packet in
-        read_and_write ()
+  print_endline "start requests";
+  let* () = Lwt_unix.sleep 1. in
+  let* () =
+    print_endline "send first request";
+    IO.write output
+      (Jsonrpc.Packet.t_of_yojson
+         (Jsonrpc.Request.yojson_of_t
+            (Jsonrpc.Request.create
+               ~id:(Jsonrpc.Id.t_of_yojson (`Int 0))
+               ~method_:"initialize" ())))
   in
-  let* () = read_and_write () in
+  let* () = Lwt_unix.sleep 2. in
+  let* () =
+    print_endline "send second request";
+    IO.write output
+      (Jsonrpc.Packet.t_of_yojson
+         (Jsonrpc.Request.yojson_of_t
+            (Jsonrpc.Request.create
+               ~id:(Jsonrpc.Id.t_of_yojson (`Int 0))
+               ~method_:"initialize" ())))
+  in
+  let* () = Lwt_unix.sleep 3. in
+  let* () =
+    print_endline "send third request";
+    IO.write output
+      (Jsonrpc.Packet.t_of_yojson
+         (Jsonrpc.Notification.yojson_of_t
+            (Lsp.Server_notification.to_jsonrpc
+               (Lsp.Server_notification.ShowMessage
+                  (ShowMessageParams.create
+                     ~message:"Hello, this is language server!"
+                     ~type_:MessageType.Info)))))
+  in
   let* () = Lwt_io.close output in
   let* () = Lwt_io.close input in
   Lwt.return_unit
@@ -31,10 +53,7 @@ let client () =
     Lwt_io.establish_server_with_client_address ~no_close:true sock_addr
       send_request
   in
+  print_endline
+    ("Mock Client is Running at "
+    ^ Unix.string_of_inet_addr Unix.inet_addr_loopback);
   Lwt_io.shutdown_server server
-(*
-  let* () =
-    Lwt_unix.connect sock
-      (Lwt_unix.ADDR_INET (Unix.inet_addr_loopback, socket_port))
-  in
-  *)

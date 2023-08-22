@@ -16,12 +16,7 @@ module IO =
       type input = Lwt_io.input_channel
       type output = Lwt_io.output_channel
 
-      let read_line input =
-        Lwt.catch
-          (fun () ->
-            let* line = Lwt_io.read_line input in
-            Lwt.return_some line)
-          (function End_of_file -> Lwt.return_none | exn -> Lwt.fail exn)
+      let read_line = Lwt_io.read_line_opt
 
       let read_exactly input len =
         let buffer = Bytes.create len in
@@ -29,11 +24,11 @@ module IO =
           (fun () ->
             let* () = Lwt_io.read_into_exactly input buffer 0 len in
             Lwt.return_some (Bytes.to_string buffer))
-          (function End_of_file -> Lwt.return_none | exn -> Lwt.fail exn)
+          (function End_of_file -> Lwt.return_none | exn -> raise exn)
 
       let write output lines =
         let* () =
-          Lwt_list.iter_s (fun line -> Lwt_io.write_line output line) lines
+          Lwt_list.iter_s (fun line -> Lwt_io.write output line) lines
         in
         Lwt_io.flush output
     end)
