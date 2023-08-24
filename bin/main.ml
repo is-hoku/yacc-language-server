@@ -77,8 +77,8 @@ let main () =
   Arg.parse options (fun _ -> ()) usage_msg;
   let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
   Lwt_io.with_connection sock_addr handle_client
+
 (*
-XXX: comment below when using a mock client
 let () =
   Lwt_main.run
     (Lwt.join

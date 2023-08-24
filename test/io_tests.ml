@@ -45,18 +45,16 @@ let%expect_test "stdout" =
     Content-Length: 98
     Content-Type: application/vscode-jsonrpc; charset=utf-8
 
-
     {"id":123,"params":{"test_int":123,"test_string":"test"},"method":"Test JSON-RPC","jsonrpc":"2.0"}|}]
 
 let%expect_test "stdin" =
   let main () =
-    let proj_dir =
-      match Sys.getenv_opt "YACC_LANGUAGE_SERVER" with
-      | None -> ""
-      | Some path -> path
-    in
-    let* input =
-      Lwt_io.open_file ~mode:Lwt_io.Input (proj_dir ^ "test/input1.txt")
+    let input =
+      Lwt_io.of_bytes ~mode:Lwt_io.Input
+        (Lwt_bytes.of_string
+           {|Content-Length: 116
+
+{"jsonrpc": "2.0", "id": 1, "method": "textDocument/completion", "params": {"test_int": 123, "test_string": "test"}}|})
     in
     let output = Lwt_io.stdout in
     let* packet = IO.read input in
@@ -69,6 +67,5 @@ let%expect_test "stdin" =
     {|
     Content-Length: 106
     Content-Type: application/vscode-jsonrpc; charset=utf-8
-
 
     {"id":1,"params":{"test_int":123,"test_string":"test"},"method":"textDocument/completion","jsonrpc":"2.0"}|}]
