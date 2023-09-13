@@ -1,0 +1,4 @@
+(library
+ (name repository)
+ (public_name language_server.repository)
+ (libraries language_server model))

@@ -1,0 +1,4 @@
+(library
+ (name usecase)
+ (public_name language_server.usecase)
+ (libraries language_server model repository))

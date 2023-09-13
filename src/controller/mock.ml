@@ -1,4 +1,4 @@
-open Import
+open Language_server.Import
 open Io
 open Lwt.Syntax
 

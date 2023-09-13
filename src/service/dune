@@ -1,0 +1,4 @@
+(library
+ (name service)
+ (public_name language_server.service)
+ (libraries language_server))

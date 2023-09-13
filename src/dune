@@ -2,15 +2,3 @@
  (name language_server)
  (public_name language_server)
  (libraries lsp lwt lwt.unix))
-
-(copy_files# controller/*.{ml,mli})
-
-(copy_files# datastore/*.{ml,mli})
-
-(copy_files# interactor/*.{ml,mli})
-
-(copy_files# model/*.{ml,mli})
-
-(copy_files# repository/*.{ml,mli})
-
-(copy_files# usecase/*.{ml,mli})

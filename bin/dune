@@ -1,4 +1,4 @@
 (executable
  (public_name language_server)
  (name main)
- (libraries language_server lsp lwt logs logs.fmt logs.lwt))
+ (libraries language_server lsp lwt logs logs.fmt logs.lwt controller interactor datastore))

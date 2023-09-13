@@ -1,3 +1,0 @@
-Content-Length: 117
-
-{"jsonrpc": "2.0", "id": 1, "method": "textDocument/completion", "params": {"test_int": 123, "test_string": "test"}}

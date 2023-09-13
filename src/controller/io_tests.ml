@@ -1,4 +1,4 @@
-open Language_server.Io
+open Io
 open Lwt.Syntax
 
 module Lwt_io_run = struct

@@ -1,0 +1,4 @@
+(library
+ (name datastore)
+ (public_name language_server.datastore)
+ (libraries language_server model repository))

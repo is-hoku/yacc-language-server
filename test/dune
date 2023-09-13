@@ -1,6 +1,4 @@
 (library
  (name language_server_tests)
- (inline_tests)
- (libraries language_server lwt)
- (preprocess
-  (pps ppx_expect)))
+ (libraries language_server)
+)

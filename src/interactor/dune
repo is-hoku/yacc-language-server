@@ -1,0 +1,4 @@
+(library
+ (name interactor)
+ (public_name language_server.interactor)
+ (libraries language_server usecase repository logs))
