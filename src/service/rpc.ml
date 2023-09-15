@@ -10,7 +10,7 @@ module type S = sig
   val on_request : request_input -> request_output
 
   type notification_input = Jsonrpc.Notification.t
-  type notification_output = Jsonrpc.Packet.t
+  type notification_output = Jsonrpc.Packet.t option
 
   val on_notification : notification_input -> notification_output
 end

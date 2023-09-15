@@ -1,7 +1,7 @@
 (library
  (name controller)
  (public_name language_server.controller)
- (libraries language_server usecase service lwt logs logs.lwt)
+ (libraries language_server usecase service lwt logs logs.fmt logs.lwt)
  (inline_tests)
  (preprocess
   (pps ppx_expect)))
