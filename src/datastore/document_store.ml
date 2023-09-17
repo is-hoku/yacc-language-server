@@ -1,4 +1,5 @@
-module type Input = Hashtbl.S
+open Language_server.Import
+
 module type Output = Repository.Document_store.S
 
 type doc = {
@@ -8,14 +9,20 @@ type doc = {
       (* XXX: Semantic tokens cache is required.*)
 }
 
-module Make (Tbl : Input) : Output = struct
-  type key = Tbl.key
+module Make : Output = struct
+  module Tbl = Hashtbl.Make (struct
+    type t = Uri.t
+
+    let equal = ( = )
+    let hash = Hashtbl.hash
+  end)
+
   type value = doc
 
   let t = Tbl.create 10
 
-  type get_input = key
-  type not_found_error = { uri : Tbl.key; message : string }
+  type get_input = Uri.t
+  type not_found_error = { uri : Uri.t; message : string }
   type get_output = (value, not_found_error) Result.t
 
   let get_document uri =
@@ -23,7 +30,7 @@ module Make (Tbl : Input) : Output = struct
     | None -> Result.error { uri; message = "not_found" }
     | Some doc -> Result.ok doc
 
-  type register_input = key * Model.Document.t
+  type register_input = Uri.t * Model.Document.t
   type register_output = value
 
   let register_document (uri, m) =

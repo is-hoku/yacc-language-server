@@ -21,14 +21,7 @@ let main () =
   Arg.parse options (fun _ -> ()) usage_msg;
   let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
   let module Server =
-  Controller.Rpc.Make (Interactor.Lsp.Make (Datastore.Document_store.Make (Hashtbl
-                                                                           .Make
-                                                                             (struct
-    type t = Datastore.Document_store.doc
-
-    let equal = ( = )
-    let hash = Hashtbl.hash
-  end)))) in
+    Controller.Rpc.Make (Interactor.Lsp.Make (Datastore.Document_store.Make)) in
   Lwt_io.with_connection sock_addr Server.start
 
 (*

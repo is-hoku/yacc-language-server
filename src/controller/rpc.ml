@@ -8,6 +8,7 @@ module type Output = Service.Rpc.S
 module Make (UC : Input) : Output = struct
   type request_input = Jsonrpc.Request.t
   type request_output = Jsonrpc.Packet.t
+  type json_error = { message : string; json : Json.t }
 
   let show_message_notification mtype msg =
     Jsonrpc.Packet.t_of_yojson
@@ -23,6 +24,30 @@ module Make (UC : Input) : Output = struct
     Jsonrpc.Packet.t_of_yojson
       (Jsonrpc.Response.yojson_of_t (Jsonrpc.Response.ok id json))
 
+  let get_client_capabilities json =
+    let get_capabilities = function
+      | `Assoc fields ->
+          ClientCapabilities.t_of_yojson
+            (Json.field_exn fields "capabilities" (fun y -> y))
+      | _ -> failwith "invalid json structure"
+    in
+    try Result.ok (get_capabilities json) with
+    | Failure message -> Result.error { message; json }
+    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
+        Result.error { message = Printexc.to_string_default err; json }
+
+  let get_text_document json =
+    let get_tdoc = function
+      | `Assoc fields ->
+          TextDocumentItem.t_of_yojson
+            (Json.field_exn fields "textDocument" (fun y -> y))
+      | _ -> failwith "invalid json structure"
+    in
+    try Result.ok (get_tdoc json) with
+    | Failure message -> Result.error { message; json }
+    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
+        Result.error { message = Printexc.to_string_default err; json }
+
   let on_request (req : request_input) =
     match req.method_ with
     | "initialize" -> (
@@ -30,12 +55,14 @@ module Make (UC : Input) : Output = struct
         | Some p -> (
             Logs.info (fun m -> m "initialize");
             match
-              UC.Initialize.initialize (Jsonrpc.Structured.yojson_of_t p)
+              get_client_capabilities (Jsonrpc.Structured.yojson_of_t p)
             with
             | Result.Ok client_capabilities ->
                 make_response_packet req.id
                   (InitializeResult.yojson_of_t
-                     (InitializeResult.create ~capabilities:client_capabilities
+                     (InitializeResult.create
+                        ~capabilities:
+                          (UC.Initialize.initialize client_capabilities)
                         ~serverInfo:
                           (InitializeResult.create_serverInfo ~name:"yacc-lsp"
                              ())
@@ -44,8 +71,10 @@ module Make (UC : Input) : Output = struct
                 show_message_notification MessageType.Error err.message)
         | None ->
             show_message_notification MessageType.Error
-              "initialize parameters are not found")
-    | _ -> show_message_notification MessageType.Error "unknown request method"
+              "parameters are not found")
+    | _method ->
+        show_message_notification MessageType.Error
+          ("unknown request method: " ^ _method)
 
   type notification_input = Jsonrpc.Notification.t
   type notification_output = Jsonrpc.Packet.t option
@@ -55,10 +84,23 @@ module Make (UC : Input) : Output = struct
     | "initialized" ->
         Logs.info (fun m -> m "initialized");
         None
-    | _ ->
+    | "textDocument/didOpen" -> (
+        match notification.params with
+        | Some p -> (
+            Logs.info (fun m -> m "textDocument/didOpen");
+            match get_text_document (Jsonrpc.Structured.yojson_of_t p) with
+            | Result.Ok _ ->
+                Some (show_message_notification MessageType.Info "open")
+            | Result.Error err ->
+                Some (show_message_notification MessageType.Error err.message))
+        | None ->
+            Some
+              (show_message_notification MessageType.Error
+                 "parameters are not found"))
+    | _method ->
         Some
           (show_message_notification MessageType.Error
-             "unknown notification method")
+             ("unknown notification method: " ^ _method))
 
   type server_input = Lwt_io.input_channel * Lwt_io.output_channel
   type server_output = unit Lwt.t

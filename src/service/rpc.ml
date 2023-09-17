@@ -6,6 +6,7 @@ module type S = sig
 
   type request_input = Jsonrpc.Request.t
   type request_output = Jsonrpc.Packet.t
+  type json_error = { message : string; json : Jsonrpc.Json.t }
 
   val on_request : request_input -> request_output
 

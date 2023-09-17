@@ -25,3 +25,10 @@ module Syntax = struct
 end
 
 type t = { tdoc : Text_document.t; syntax : Syntax.t }
+
+let make doc =
+  let tdoc =
+    Text_document.make ~position_encoding:`UTF8
+      (DidOpenTextDocumentParams.create ~textDocument:doc)
+  in
+  { tdoc; syntax = Syntax.of_text_document tdoc }
