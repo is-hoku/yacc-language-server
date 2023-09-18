@@ -48,6 +48,34 @@ module Make (UC : Input) : Output = struct
     | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
         Result.error { message = Printexc.to_string_default err; json }
 
+  let get_versioned_text_document json =
+    let get_tdoc = function
+      | `Assoc fields ->
+          VersionedTextDocumentIdentifier.t_of_yojson
+            (Json.field_exn fields "textDocument" (fun y -> y))
+      | _ -> failwith "invalid json structure"
+    in
+    try Result.ok (get_tdoc json) with
+    | Failure message -> Result.error { message; json }
+    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
+        Result.error { message = Printexc.to_string_default err; json }
+
+  let get_change_event json =
+    let get_events = function
+      | `Assoc fields -> (
+          match Json.field_exn fields "contentChanges" (fun y -> y) with
+          | `List changes ->
+              List.map
+                (fun y -> TextDocumentContentChangeEvent.t_of_yojson y)
+                changes
+          | _ -> failwith "not found contentChanges field")
+      | _ -> failwith "invalid json structure"
+    in
+    try Result.ok (get_events json) with
+    | Failure message -> Result.error { message; json }
+    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
+        Result.error { message = Printexc.to_string_default err; json }
+
   let on_request (req : request_input) =
     match req.method_ with
     | "initialize" -> (
@@ -74,7 +102,8 @@ module Make (UC : Input) : Output = struct
               "parameters are not found")
     | _method ->
         show_message_notification MessageType.Error
-          ("unknown request method: " ^ _method)
+          ("unknown request method: " ^ _method
+          ^ Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req))
 
   type notification_input = Jsonrpc.Notification.t
   type notification_output = Jsonrpc.Packet.t option
@@ -89,15 +118,59 @@ module Make (UC : Input) : Output = struct
         | Some p -> (
             Logs.info (fun m -> m "textDocument/didOpen");
             match get_text_document (Jsonrpc.Structured.yojson_of_t p) with
-            | Result.Ok _ ->
-                Some (show_message_notification MessageType.Info "open")
+            | Result.Ok item -> (
+                match UC.Textdocument.didopen item with
+                | Result.Ok _ -> None
+                | Result.Error err ->
+                    Some
+                      (show_message_notification MessageType.Error
+                         (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                            err.message)))
             | Result.Error err ->
                 Some (show_message_notification MessageType.Error err.message))
         | None ->
             Some
               (show_message_notification MessageType.Error
                  "parameters are not found"))
+    | "textDocument/didChange" -> (
+        match notification.params with
+        | Some p -> (
+            Logs.info (fun m -> m "textDocument/didChange");
+            match
+              ( get_versioned_text_document (Jsonrpc.Structured.yojson_of_t p),
+                get_change_event (Jsonrpc.Structured.yojson_of_t p) )
+            with
+            | Result.Ok tdoc_id, Result.Ok item -> (
+                match
+                  UC.Textdocument.didchange
+                    { uri = tdoc_id.uri; contents = item }
+                with
+                | Result.Ok _ ->
+                    (*Logs.info (fun m -> m "%s" (Text_document.text d));*)
+                    None
+                | Result.Error err ->
+                    Some
+                      (show_message_notification MessageType.Error
+                         (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                            err.message)))
+            | Result.Error err1, Result.Error err2 ->
+                (* XXX: fix this error handling *)
+                Some
+                  (show_message_notification MessageType.Error
+                     (err1.message ^ "\n" ^ err2.message))
+            | Result.Error err, _ ->
+                Some (show_message_notification MessageType.Error err.message)
+            | _, Result.Error err ->
+                Some (show_message_notification MessageType.Error err.message))
+        | None ->
+            Some
+              (show_message_notification MessageType.Error
+                 "parameters are not found"))
     | _method ->
+        Logs.info (fun m ->
+            m "unknown: %s"
+              (Yojson.Safe.to_string
+                 (Jsonrpc.Notification.yojson_of_t notification)));
         Some
           (show_message_notification MessageType.Error
              ("unknown notification method: " ^ _method))

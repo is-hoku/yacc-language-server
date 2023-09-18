@@ -1,10 +1,16 @@
 open Language_server.Import
 
 module type S = sig
-  type value
+  type value = {
+    document : Model.Document.t option;
+    promotions : int;
+        (* The number of promotions for the document *)
+        (* XXX: Semantic tokens cache is required.*)
+  }
+
   type get_input = Uri.t
-  type not_found_error = { uri : Uri.t; message : string }
-  type get_output = (value, not_found_error) Result.t
+  type error = Not_found of Uri.t
+  type get_output = (value, error) Result.t
 
   val get_document : get_input -> get_output
 
