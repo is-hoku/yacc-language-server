@@ -9,11 +9,18 @@ module Make (Repo : Input) : Output = struct
 
   let client_capabilities = ref (ClientCapabilities.create ())
 
-  let initialize c =
+  let exec c =
     client_capabilities := c;
     ServerCapabilities.create
       ~textDocumentSync:
         (`TextDocumentSyncOptions
           (TextDocumentSyncOptions.create ~openClose:true ~change:Incremental ()))
-      ~codeActionProvider:(`Bool true) ()
+      ~completionProvider:
+        (CompletionOptions.create ~triggerCharacters:[ "i" ]
+           ~allCommitCharacters:[] ~resolveProvider:true
+           ~completionItem:
+             (CompletionOptions.create_completionItem ~labelDetailsSupport:true
+                ())
+           ~workDoneProgress:false ())
+      ()
 end

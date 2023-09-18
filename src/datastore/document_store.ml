@@ -4,7 +4,7 @@ module type Output = Repository.Document_store.S
 
 module Make : Output = struct
   module Tbl = Hashtbl.Make (struct
-    type t = Uri.t
+    type t = DocumentUri.t
 
     let equal = ( = )
     let hash = Hashtbl.hash
@@ -19,8 +19,8 @@ module Make : Output = struct
 
   let t = Tbl.create 10
 
-  type get_input = Uri.t
-  type error = Not_found of Uri.t
+  type get_input = DocumentUri.t
+  type error = Not_found of DocumentUri.t
   type get_output = (value, error) Result.t
 
   let get_document uri =
@@ -28,7 +28,7 @@ module Make : Output = struct
     | None -> Result.error (Not_found uri)
     | Some doc -> Result.ok doc
 
-  type register_input = Uri.t * Model.Document.t
+  type register_input = DocumentUri.t * Model.Document.t
   type register_output = value
 
   let register_document (uri, m) =

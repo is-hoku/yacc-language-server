@@ -5,5 +5,5 @@ module type S = sig
   type output = ServerCapabilities.t
 
   val client_capabilities : ClientCapabilities.t ref
-  val initialize : input -> output
+  val exec : input -> output
 end

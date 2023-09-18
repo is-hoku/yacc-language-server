@@ -28,6 +28,7 @@ include struct
   module DiagnosticSeverity = DiagnosticSeverity
   module DiagnosticTag = DiagnosticTag
   module DidChangeConfigurationParams = DidChangeConfigurationParams
+  module DidChangeTextDocumentParams = DidChangeTextDocumentParams
   module DidChangeWorkspaceFoldersParams = DidChangeWorkspaceFoldersParams
   module DidOpenTextDocumentParams = DidOpenTextDocumentParams
   module Diff = Lsp.Diff
@@ -55,6 +56,7 @@ include struct
     OptionalVersionedTextDocumentIdentifier
 
   module ParameterInformation = ParameterInformation
+  module Position = Position
   module PositionEncodingKind = PositionEncodingKind
   module ProgressParams = ProgressParams
   module ProgressToken = ProgressToken

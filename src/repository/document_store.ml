@@ -8,13 +8,13 @@ module type S = sig
         (* XXX: Semantic tokens cache is required.*)
   }
 
-  type get_input = Uri.t
-  type error = Not_found of Uri.t
+  type get_input = DocumentUri.t
+  type error = Not_found of DocumentUri.t
   type get_output = (value, error) Result.t
 
   val get_document : get_input -> get_output
 
-  type register_input = Uri.t * Model.Document.t
+  type register_input = DocumentUri.t * Model.Document.t
   type register_output = value
 
   val register_document : register_input -> register_output

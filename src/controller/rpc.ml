@@ -24,83 +24,49 @@ module Make (UC : Input) : Output = struct
     Jsonrpc.Packet.t_of_yojson
       (Jsonrpc.Response.yojson_of_t (Jsonrpc.Response.ok id json))
 
-  let get_client_capabilities json =
-    let get_capabilities = function
-      | `Assoc fields ->
-          ClientCapabilities.t_of_yojson
-            (Json.field_exn fields "capabilities" (fun y -> y))
-      | _ -> failwith "invalid json structure"
-    in
-    try Result.ok (get_capabilities json) with
-    | Failure message -> Result.error { message; json }
-    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
-        Result.error { message = Printexc.to_string_default err; json }
-
-  let get_text_document json =
-    let get_tdoc = function
-      | `Assoc fields ->
-          TextDocumentItem.t_of_yojson
-            (Json.field_exn fields "textDocument" (fun y -> y))
-      | _ -> failwith "invalid json structure"
-    in
-    try Result.ok (get_tdoc json) with
-    | Failure message -> Result.error { message; json }
-    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
-        Result.error { message = Printexc.to_string_default err; json }
-
-  let get_versioned_text_document json =
-    let get_tdoc = function
-      | `Assoc fields ->
-          VersionedTextDocumentIdentifier.t_of_yojson
-            (Json.field_exn fields "textDocument" (fun y -> y))
-      | _ -> failwith "invalid json structure"
-    in
-    try Result.ok (get_tdoc json) with
-    | Failure message -> Result.error { message; json }
-    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
-        Result.error { message = Printexc.to_string_default err; json }
-
-  let get_change_event json =
-    let get_events = function
-      | `Assoc fields -> (
-          match Json.field_exn fields "contentChanges" (fun y -> y) with
-          | `List changes ->
-              List.map
-                (fun y -> TextDocumentContentChangeEvent.t_of_yojson y)
-                changes
-          | _ -> failwith "not found contentChanges field")
-      | _ -> failwith "invalid json structure"
-    in
-    try Result.ok (get_events json) with
-    | Failure message -> Result.error { message; json }
-    | Ppx_yojson_conv_lib.Yojson_conv.Of_yojson_error (err, json) ->
-        Result.error { message = Printexc.to_string_default err; json }
-
   let on_request (req : request_input) =
     match req.method_ with
     | "initialize" -> (
         match req.params with
-        | Some p -> (
+        | Some p ->
             Logs.info (fun m -> m "initialize");
+            let params =
+              InitializeParams.t_of_yojson (Jsonrpc.Structured.yojson_of_t p)
+            in
+            make_response_packet req.id
+              (InitializeResult.yojson_of_t
+                 (InitializeResult.create
+                    ~capabilities:(UC.Initialize.exec params.capabilities)
+                    ~serverInfo:
+                      (InitializeResult.create_serverInfo ~name:"yacc-lsp" ())
+                    ()))
+        | None ->
+            show_message_notification MessageType.Error
+              "parameters are not found")
+    | "textDocument/completion" -> (
+        match req.params with
+        | Some p -> (
+            Logs.info (fun m -> m "completion");
+            let params =
+              CompletionParams.t_of_yojson (Jsonrpc.Structured.yojson_of_t p)
+            in
             match
-              get_client_capabilities (Jsonrpc.Structured.yojson_of_t p)
+              UC.Completion.exec
+                { uri = params.textDocument.uri; pos = params.position }
             with
-            | Result.Ok client_capabilities ->
+            | Result.Ok comp ->
                 make_response_packet req.id
-                  (InitializeResult.yojson_of_t
-                     (InitializeResult.create
-                        ~capabilities:
-                          (UC.Initialize.initialize client_capabilities)
-                        ~serverInfo:
-                          (InitializeResult.create_serverInfo ~name:"yacc-lsp"
-                             ())
-                        ()))
+                  (`List (List.map CompletionItem.yojson_of_t comp))
             | Result.Error err ->
-                show_message_notification MessageType.Error err.message)
+                show_message_notification MessageType.Error
+                  (Printf.sprintf "%s: %s" (Uri.to_string err.uri) err.message))
         | None ->
             show_message_notification MessageType.Error
               "parameters are not found")
     | _method ->
+        Logs.info (fun m ->
+            m "unknown: %s"
+              (Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)));
         show_message_notification MessageType.Error
           ("unknown request method: " ^ _method
           ^ Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req))
@@ -117,17 +83,17 @@ module Make (UC : Input) : Output = struct
         match notification.params with
         | Some p -> (
             Logs.info (fun m -> m "textDocument/didOpen");
-            match get_text_document (Jsonrpc.Structured.yojson_of_t p) with
-            | Result.Ok item -> (
-                match UC.Textdocument.didopen item with
-                | Result.Ok _ -> None
-                | Result.Error err ->
-                    Some
-                      (show_message_notification MessageType.Error
-                         (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
-                            err.message)))
+            let params =
+              DidOpenTextDocumentParams.t_of_yojson
+                (Jsonrpc.Structured.yojson_of_t p)
+            in
+            match UC.DidOpen.exec params.textDocument with
+            | Result.Ok _ -> None
             | Result.Error err ->
-                Some (show_message_notification MessageType.Error err.message))
+                Some
+                  (show_message_notification MessageType.Error
+                     (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                        err.message)))
         | None ->
             Some
               (show_message_notification MessageType.Error
@@ -136,32 +102,25 @@ module Make (UC : Input) : Output = struct
         match notification.params with
         | Some p -> (
             Logs.info (fun m -> m "textDocument/didChange");
+            let params =
+              DidChangeTextDocumentParams.t_of_yojson
+                (Jsonrpc.Structured.yojson_of_t p)
+            in
             match
-              ( get_versioned_text_document (Jsonrpc.Structured.yojson_of_t p),
-                get_change_event (Jsonrpc.Structured.yojson_of_t p) )
+              UC.DidChange.exec
+                {
+                  uri = params.textDocument.uri;
+                  contents = params.contentChanges;
+                }
             with
-            | Result.Ok tdoc_id, Result.Ok item -> (
-                match
-                  UC.Textdocument.didchange
-                    { uri = tdoc_id.uri; contents = item }
-                with
-                | Result.Ok _ ->
-                    (*Logs.info (fun m -> m "%s" (Text_document.text d));*)
-                    None
-                | Result.Error err ->
-                    Some
-                      (show_message_notification MessageType.Error
-                         (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
-                            err.message)))
-            | Result.Error err1, Result.Error err2 ->
-                (* XXX: fix this error handling *)
+            | Result.Ok _ ->
+                (*Logs.info (fun m -> m "%s" (Text_document.text d));*)
+                None
+            | Result.Error err ->
                 Some
                   (show_message_notification MessageType.Error
-                     (err1.message ^ "\n" ^ err2.message))
-            | Result.Error err, _ ->
-                Some (show_message_notification MessageType.Error err.message)
-            | _, Result.Error err ->
-                Some (show_message_notification MessageType.Error err.message))
+                     (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                        err.message)))
         | None ->
             Some
               (show_message_notification MessageType.Error
