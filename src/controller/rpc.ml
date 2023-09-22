@@ -75,7 +75,7 @@ module Make (UC : Input) : Output = struct
             m "unknown: %s"
               (Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)));
         Lwt.return
-          (show_message_notification MessageType.Error
+          (show_message_notification MessageType.Log
              ("unknown request method: " ^ _method
              ^ Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)))
 
@@ -141,7 +141,7 @@ module Make (UC : Input) : Output = struct
               (Yojson.Safe.to_string
                  (Jsonrpc.Notification.yojson_of_t notification)));
         Lwt.return_some
-          (show_message_notification MessageType.Error
+          (show_message_notification MessageType.Log
              ("unknown notification method: " ^ _method))
 
   type server_input = Lwt_io.input_channel * Lwt_io.output_channel

@@ -12,31 +12,37 @@ module Make (Repo : Input) : Output = struct
 
   let exec (item : input) =
     let* result = Repo.get_document item.uri in
-    Lwt.return
-      (match result with
-      | Result.Ok v -> (
-          match v.document with
-          | Some d ->
-              let pos = Text_document.absolute_position d.tdoc item.pos in
-              Logs.info (fun m ->
-                  m "%s: %c" (string_of_int pos)
-                    (String.get (Text_document.text d.tdoc) pos));
-              if String.get (Text_document.text d.tdoc) pos = 'i' then
-                Result.ok
-                  [
-                    CompletionItem.create ~label:"inagaki-lab" ();
-                    CompletionItem.create ~label:"inagaki-sensei" ();
-                    CompletionItem.create ~label:"india" ();
-                    CompletionItem.create ~label:"indonesia" ();
-                  ]
-              else
-                Result.error
-                  {
-                    message = "Invalid Completation";
-                    uri = Text_document.documentUri d.tdoc;
-                  }
-          | None ->
-              Result.error { message = "Empty Text Document"; uri = item.uri })
-      | Result.Error (Not_found err) ->
-          Result.error { message = "Not Found"; uri = err })
+    match result with
+    | Result.Ok v -> (
+        match v.document with
+        | Some d ->
+            let text = Text_document.text d.tdoc in
+            let pos = Text_document.absolute_position d.tdoc item.pos - 1 in
+            if pos >= String.length (Text_document.text d.tdoc) then
+              Lwt.return_error
+                {
+                  message =
+                    Printf.sprintf "out of bounds: len=%d pos=%d doc=%s"
+                      (String.length text) pos text;
+                  uri = item.uri;
+                }
+            else if String.get (Text_document.text d.tdoc) pos = 'i' then
+              Lwt.return_ok
+                [
+                  CompletionItem.create ~label:"inagaki-lab" ();
+                  CompletionItem.create ~label:"inagaki-sensei" ();
+                  CompletionItem.create ~label:"india" ();
+                  CompletionItem.create ~label:"indonesia" ();
+                ]
+            else
+              Lwt.return_error
+                {
+                  message = "Invalid Completation";
+                  uri = Text_document.documentUri d.tdoc;
+                }
+        | None ->
+            Lwt.return_error { message = "Empty Text Document"; uri = item.uri }
+        )
+    | Result.Error (Not_found err) ->
+        Lwt.return_error { message = "Not Found"; uri = err }
 end

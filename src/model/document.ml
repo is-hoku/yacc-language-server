@@ -28,9 +28,9 @@ type t = { tdoc : Text_document.t; syntax : Syntax.t }
 
 let syntax m = m.syntax
 
-let make doc =
+let make doc encoding =
   let tdoc =
-    Text_document.make ~position_encoding:`UTF8
+    Text_document.make ~position_encoding:encoding
       (DidOpenTextDocumentParams.create ~textDocument:doc)
   in
   { tdoc; syntax = Syntax.of_text_document tdoc }

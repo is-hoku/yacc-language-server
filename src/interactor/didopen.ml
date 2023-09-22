@@ -11,10 +11,10 @@ module Make (Repo : Input) : Output = struct
   type output = (Text_document.t, error) Result.t Lwt.t
 
   let exec (doc : input) =
-    let* d = Repo.register_document (doc.uri, Model.Document.make doc) in
-    Lwt.return
-      (match d.document with
-      | Some v -> Result.ok v.tdoc
-      | None ->
-          Result.error { message = "Cannot open the document"; uri = doc.uri })
+    (* XXX: change position encoding value based on client capabilities *)
+    let* d = Repo.register_document (doc.uri, Model.Document.make doc `UTF16) in
+    match d.document with
+    | Some v -> Lwt.return_ok v.tdoc
+    | None ->
+        Lwt.return_error { message = "Cannot open the document"; uri = doc.uri }
 end

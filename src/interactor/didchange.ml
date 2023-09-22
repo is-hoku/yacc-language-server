@@ -16,22 +16,21 @@ module Make (Repo : Input) : Output = struct
 
   let exec (doc : input) =
     let* result = Repo.get_document doc.uri in
-    Lwt.return
-      (match result with
-      | Result.Ok v -> (
-          match v.document with
-          | Some d ->
-              let tdoc =
-                Text_document.apply_content_changes d.tdoc doc.contents
-              in
-              let _ =
-                Repo.register_document
-                  ( Text_document.documentUri tdoc,
-                    { tdoc; syntax = Model.Document.syntax d } )
-              in
-              Result.ok tdoc
-          | None ->
-              Result.error { message = "Empty Text Document"; uri = doc.uri })
-      | Result.Error (Not_found err) ->
-          Result.error { message = "Not Found"; uri = err })
+    match result with
+    | Result.Ok v -> (
+        match v.document with
+        | Some d ->
+            let tdoc =
+              Text_document.apply_content_changes d.tdoc doc.contents
+            in
+            let _ =
+              Repo.register_document
+                ( Text_document.documentUri tdoc,
+                  { tdoc; syntax = Model.Document.syntax d } )
+            in
+            Lwt.return_ok tdoc
+        | None ->
+            Lwt.return_error { message = "Empty Text Document"; uri = doc.uri })
+    | Result.Error (Not_found err) ->
+        Lwt.return_error { message = "Not Found"; uri = err }
 end
