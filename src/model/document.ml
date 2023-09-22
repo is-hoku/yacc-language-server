@@ -26,6 +26,8 @@ end
 
 type t = { tdoc : Text_document.t; syntax : Syntax.t }
 
+let syntax m = m.syntax
+
 let make doc =
   let tdoc =
     Text_document.make ~position_encoding:`UTF8

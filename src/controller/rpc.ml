@@ -7,7 +7,7 @@ module type Output = Service.Rpc.S
 
 module Make (UC : Input) : Output = struct
   type request_input = Jsonrpc.Request.t
-  type request_output = Jsonrpc.Packet.t
+  type request_output = Jsonrpc.Packet.t Lwt.t
   type json_error = { message : string; json : Json.t }
 
   let show_message_notification mtype msg =
@@ -33,16 +33,18 @@ module Make (UC : Input) : Output = struct
             let params =
               InitializeParams.t_of_yojson (Jsonrpc.Structured.yojson_of_t p)
             in
-            make_response_packet req.id
-              (InitializeResult.yojson_of_t
-                 (InitializeResult.create
-                    ~capabilities:(UC.Initialize.exec params.capabilities)
-                    ~serverInfo:
-                      (InitializeResult.create_serverInfo ~name:"yacc-lsp" ())
-                    ()))
+            Lwt.return
+              (make_response_packet req.id
+                 (InitializeResult.yojson_of_t
+                    (InitializeResult.create
+                       ~capabilities:(UC.Initialize.exec params.capabilities)
+                       ~serverInfo:
+                         (InitializeResult.create_serverInfo ~name:"yacc-lsp" ())
+                       ())))
         | None ->
-            show_message_notification MessageType.Error
-              "parameters are not found")
+            Lwt.return
+              (show_message_notification MessageType.Error
+                 "parameters are not found"))
     | "textDocument/completion" -> (
         match req.params with
         | Some p -> (
@@ -50,35 +52,41 @@ module Make (UC : Input) : Output = struct
             let params =
               CompletionParams.t_of_yojson (Jsonrpc.Structured.yojson_of_t p)
             in
-            match
+            let* result =
               UC.Completion.exec
                 { uri = params.textDocument.uri; pos = params.position }
-            with
+            in
+            match result with
             | Result.Ok comp ->
-                make_response_packet req.id
-                  (`List (List.map CompletionItem.yojson_of_t comp))
+                Lwt.return
+                  (make_response_packet req.id
+                     (`List (List.map CompletionItem.yojson_of_t comp)))
             | Result.Error err ->
-                show_message_notification MessageType.Error
-                  (Printf.sprintf "%s: %s" (Uri.to_string err.uri) err.message))
+                Lwt.return
+                  (show_message_notification MessageType.Error
+                     (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                        err.message)))
         | None ->
-            show_message_notification MessageType.Error
-              "parameters are not found")
+            Lwt.return
+              (show_message_notification MessageType.Error
+                 "parameters are not found"))
     | _method ->
         Logs.info (fun m ->
             m "unknown: %s"
               (Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)));
-        show_message_notification MessageType.Error
-          ("unknown request method: " ^ _method
-          ^ Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req))
+        Lwt.return
+          (show_message_notification MessageType.Error
+             ("unknown request method: " ^ _method
+             ^ Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)))
 
   type notification_input = Jsonrpc.Notification.t
-  type notification_output = Jsonrpc.Packet.t option
+  type notification_output = Jsonrpc.Packet.t option Lwt.t
 
   let on_notification (notification : notification_input) =
     match notification.method_ with
     | "initialized" ->
         Logs.info (fun m -> m "initialized");
-        None
+        Lwt.return_none
     | "textDocument/didOpen" -> (
         match notification.params with
         | Some p -> (
@@ -87,15 +95,16 @@ module Make (UC : Input) : Output = struct
               DidOpenTextDocumentParams.t_of_yojson
                 (Jsonrpc.Structured.yojson_of_t p)
             in
-            match UC.DidOpen.exec params.textDocument with
-            | Result.Ok _ -> None
+            let* result = UC.DidOpen.exec params.textDocument in
+            match result with
+            | Result.Ok _ -> Lwt.return_none
             | Result.Error err ->
-                Some
+                Lwt.return_some
                   (show_message_notification MessageType.Error
                      (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
                         err.message)))
         | None ->
-            Some
+            Lwt.return_some
               (show_message_notification MessageType.Error
                  "parameters are not found"))
     | "textDocument/didChange" -> (
@@ -106,23 +115,24 @@ module Make (UC : Input) : Output = struct
               DidChangeTextDocumentParams.t_of_yojson
                 (Jsonrpc.Structured.yojson_of_t p)
             in
-            match
+            let* result =
               UC.DidChange.exec
                 {
                   uri = params.textDocument.uri;
                   contents = params.contentChanges;
                 }
-            with
+            in
+            match result with
             | Result.Ok _ ->
                 (*Logs.info (fun m -> m "%s" (Text_document.text d));*)
-                None
+                Lwt.return_none
             | Result.Error err ->
-                Some
+                Lwt.return_some
                   (show_message_notification MessageType.Error
                      (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
                         err.message)))
         | None ->
-            Some
+            Lwt.return_some
               (show_message_notification MessageType.Error
                  "parameters are not found"))
     | _method ->
@@ -130,7 +140,7 @@ module Make (UC : Input) : Output = struct
             m "unknown: %s"
               (Yojson.Safe.to_string
                  (Jsonrpc.Notification.yojson_of_t notification)));
-        Some
+        Lwt.return_some
           (show_message_notification MessageType.Error
              ("unknown notification method: " ^ _method))
 
@@ -146,10 +156,13 @@ module Make (UC : Input) : Output = struct
           let* () =
             match packet with
             | Notification r -> (
-                match on_notification r with
+                let* result = on_notification r in
+                match result with
                 | Some p -> IO.write output p
                 | None -> Lwt.return_unit)
-            | Request r -> IO.write output (on_request r)
+            | Request r ->
+                let* result = on_request r in
+                IO.write output result
             | Response _ ->
                 Logs_lwt.info (fun m -> m "responses aren't supported")
             | Batch_call _ ->

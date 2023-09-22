@@ -10,12 +10,12 @@ module type S = sig
 
   type get_input = DocumentUri.t
   type error = Not_found of DocumentUri.t
-  type get_output = (value, error) Result.t
+  type get_output = (value, error) Result.t Lwt.t
 
   val get_document : get_input -> get_output
 
   type register_input = DocumentUri.t * Model.Document.t
-  type register_output = value
+  type register_output = value Lwt.t
 
   val register_document : register_input -> register_output
 end

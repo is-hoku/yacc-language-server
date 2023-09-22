@@ -5,13 +5,13 @@ module type S = sig
   val start : server_input -> server_output
 
   type request_input = Jsonrpc.Request.t
-  type request_output = Jsonrpc.Packet.t
+  type request_output = Jsonrpc.Packet.t Lwt.t
   type json_error = { message : string; json : Jsonrpc.Json.t }
 
   val on_request : request_input -> request_output
 
   type notification_input = Jsonrpc.Notification.t
-  type notification_output = Jsonrpc.Packet.t option
+  type notification_output = Jsonrpc.Packet.t option Lwt.t
 
   val on_notification : notification_input -> notification_output
 end

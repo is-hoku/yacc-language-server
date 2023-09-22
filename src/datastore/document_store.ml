@@ -18,25 +18,28 @@ module Make : Output = struct
   }
 
   let t = Tbl.create 10
+  let mutex = Lwt_mutex.create ()
 
   type get_input = DocumentUri.t
   type error = Not_found of DocumentUri.t
-  type get_output = (value, error) Result.t
+  type get_output = (value, error) Result.t Lwt.t
 
   let get_document uri =
-    match Tbl.find_opt t uri with
-    | None -> Result.error (Not_found uri)
-    | Some doc -> Result.ok doc
+    Lwt_mutex.with_lock mutex (fun () ->
+        match Tbl.find_opt t uri with
+        | None -> Lwt.return (Result.error (Not_found uri))
+        | Some doc -> Lwt.return (Result.ok doc))
 
   type register_input = DocumentUri.t * Model.Document.t
-  type register_output = value
+  type register_output = value Lwt.t
 
   let register_document (uri, m) =
-    let doc =
-      match Tbl.find_opt t uri with
-      | None -> { document = Some m; promotions = 0 }
-      | Some d -> { document = Some m; promotions = d.promotions }
-    in
-    Tbl.replace t uri doc;
-    doc
+    Lwt_mutex.with_lock mutex (fun () ->
+        let doc =
+          match Tbl.find_opt t uri with
+          | None -> { document = Some m; promotions = 0 }
+          | Some d -> { document = Some m; promotions = d.promotions }
+        in
+        Tbl.replace t uri doc;
+        Lwt.return doc)
 end
