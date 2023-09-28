@@ -4,13 +4,10 @@ module type Input = Repository.Document_store.S
 module type Output = Usecase.Initialize.S
 
 module Make (Repo : Input) : Output = struct
-  type input = ClientCapabilities.t
+  type input = unit
   type output = ServerCapabilities.t
 
-  let client_capabilities = ref (ClientCapabilities.create ())
-
-  let exec c =
-    client_capabilities := c;
+  let exec () =
     ServerCapabilities.create
       ~textDocumentSync:
         (`TextDocumentSyncOptions

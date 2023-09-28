@@ -2,11 +2,14 @@ open Language_server.Import
 
 module type S = sig
   type init = Uninitialized | Initialized of { params : InitializeParams.t }
-  type state = { init : init }
+  type client_capabilities = ClientCapabilities.t
+  type state = { init : init; client_capabilities : client_capabilities }
 
   val create_state : unit -> state
-  val initialize_params : state -> InitializeParams.t option
+  val get_initialize_params : state -> InitializeParams.t option
   val initialize : state -> InitializeParams.t -> state option
+  val get_client_capabilities : state -> ClientCapabilities.t
+  val update_client_capabilities : state -> ClientCapabilities.t -> state
 
   type server_input = Lwt_io.input_channel * Lwt_io.output_channel
   type server_output = unit Lwt.t

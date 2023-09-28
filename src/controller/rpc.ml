@@ -7,19 +7,31 @@ module type Output = Service.Rpc.S
 
 module Make (UC : Input) : Output = struct
   type init = Uninitialized | Initialized of { params : InitializeParams.t }
-  type state = { init : init }
+  type client_capabilities = ClientCapabilities.t
+  type state = { init : init; client_capabilities : client_capabilities }
 
-  let create_state () = { init = Uninitialized }
+  let create_state () =
+    { init = Uninitialized; client_capabilities = ClientCapabilities.create () }
 
-  let initialize_params state =
+  let get_initialize_params state =
     match state.init with
     | Uninitialized -> None
     | Initialized init -> Some init.params
 
-  let initialize t params =
-    match t.init with
+  let initialize s params =
+    match s.init with
     | Initialized _ -> None
-    | Uninitialized -> Some { init = Initialized { params } }
+    | Uninitialized ->
+        Some
+          {
+            init = Initialized { params };
+            client_capabilities = s.client_capabilities;
+          }
+
+  let get_client_capabilities s = s.client_capabilities
+
+  let update_client_capabilities s client_capabilities =
+    { init = s.init; client_capabilities }
 
   type request_input = Jsonrpc.Request.t * state
   type request_output = (Jsonrpc.Packet.t * state) Lwt.t
@@ -41,11 +53,13 @@ module Make (UC : Input) : Output = struct
 
   let on_request ((req, s) : request_input) =
     let params = req.params in
-    let state = initialize_params s in
+    let is_initialized = get_initialize_params s in
+    (* XXX: Check client capabilities when adding methods *)
+    (*let capabilities = get_client_capabilities s in*)
     match req.method_ with
     | "initialize" -> (
         Logs.info (fun m -> m "initialize");
-        match (params, state) with
+        match (params, is_initialized) with
         (* Since initialize requests are sent only once, initialize requests are allowed only when uninitialized *)
         | Some p, None -> (
             let params =
@@ -53,12 +67,14 @@ module Make (UC : Input) : Output = struct
             in
             match initialize s params with
             | Some new_state ->
+                let new_state =
+                  update_client_capabilities new_state params.capabilities
+                in
                 Lwt.return
                   ( make_response_packet req.id
                       (InitializeResult.yojson_of_t
                          (InitializeResult.create
-                            ~capabilities:
-                              (UC.Initialize.exec params.capabilities)
+                            ~capabilities:(UC.Initialize.exec ())
                             ~serverInfo:
                               (InitializeResult.create_serverInfo
                                  ~name:"yacc-lsp" ())
@@ -80,7 +96,7 @@ module Make (UC : Input) : Output = struct
                 s ))
     | "textDocument/completion" -> (
         Logs.info (fun m -> m "completion");
-        match (params, state) with
+        match (params, is_initialized) with
         | Some p, Some _ -> (
             let params =
               CompletionParams.t_of_yojson (Jsonrpc.Structured.yojson_of_t p)
@@ -123,12 +139,15 @@ module Make (UC : Input) : Output = struct
   type notification_output = (Jsonrpc.Packet.t option * state) Lwt.t
 
   let on_notification ((notification, s) : notification_input) =
+    (* XXX: add supports for willSave, willSaveWaitUntil, and DidSave notifications *)
     let params = notification.params in
-    let state = initialize_params s in
+    let is_initialized = get_initialize_params s in
+    (* XXX: Check client capabilities when adding methods *)
+    (*let capabilities = get_client_capabilities s in*)
     match notification.method_ with
     | "initialized" -> (
         Logs.info (fun m -> m "initialized");
-        match state with
+        match is_initialized with
         | Some _ -> Lwt.return (None, s)
         | None ->
             Lwt.return
@@ -137,7 +156,7 @@ module Make (UC : Input) : Output = struct
                 s ))
     | "textDocument/didOpen" -> (
         Logs.info (fun m -> m "textDocument/didOpen");
-        match (params, state) with
+        match (params, is_initialized) with
         | Some p, Some _ -> (
             Logs.info (fun m -> m "textDocument/didOpen");
             let params =
@@ -167,7 +186,7 @@ module Make (UC : Input) : Output = struct
                 s ))
     | "textDocument/didChange" -> (
         Logs.info (fun m -> m "textDocument/didChange");
-        match (params, state) with
+        match (params, is_initialized) with
         | Some p, Some _ -> (
             let params =
               DidChangeTextDocumentParams.t_of_yojson
@@ -181,9 +200,7 @@ module Make (UC : Input) : Output = struct
                 }
             in
             match result with
-            | Result.Ok _ ->
-                (*Logs.info (fun m -> m "%s" (Text_document.text d));*)
-                Lwt.return (None, s)
+            | Result.Ok _ -> Lwt.return (None, s)
             | Result.Error err ->
                 Lwt.return
                   ( Some
@@ -219,6 +236,7 @@ module Make (UC : Input) : Output = struct
   let start (input, output) =
     let s = create_state () in
     let rec read_and_write state =
+      (* XXX: process requests in parallel using Lwt.async etc. *)
       let* request = IO.read input in
       match request with
       | None -> Lwt.return_unit
