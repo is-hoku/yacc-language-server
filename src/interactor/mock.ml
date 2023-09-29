@@ -4,7 +4,7 @@ type value = {
   document : Model.Document.t option;
   promotions : int;
       (* The number of promotions for the document *)
-      (* XXX: Semantic tokens cache is required.*)
+      (* TODO: Semantic tokens cache is required.*)
 }
 
 type get_input = DocumentUri.t
@@ -31,5 +31,8 @@ let get_document uri =
 type register_input = DocumentUri.t * Model.Document.t
 type register_output = value Lwt.t
 
-let register_document (_uri, m) =
-  Lwt.return { document = Some m; promotions = 0 }
+let register_document (uri, m) =
+  match DocumentUri.to_string uri with
+  | "file:///interactor/mock/not_found.y" ->
+      Lwt.return { document = None; promotions = 0 }
+  | _ -> Lwt.return { document = Some m; promotions = 0 }

@@ -5,7 +5,7 @@ module type S = sig
     document : Model.Document.t option;
     promotions : int;
         (* The number of promotions for the document *)
-        (* XXX: Semantic tokens cache is required.*)
+        (* TODO: Semantic tokens cache is required.*)
   }
 
   type get_input = DocumentUri.t

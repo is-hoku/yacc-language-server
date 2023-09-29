@@ -47,7 +47,7 @@ module Make (Repo : Input) : Output = struct
         Lwt.return_error { message = "Not Found"; uri = err }
 end
 
-let%test _ =
+let%test "OK: valid input" =
   let module UC = Make (Mock) in
   let result =
     Lwt_main.run
@@ -57,9 +57,17 @@ let%test _ =
            pos = Position.create ~character:1 ~line:0;
          })
   in
-  match result with
-  | Result.Ok _ -> true
-  | Result.Error err ->
-      print_endline
-        (Printf.sprintf "ERROR: %s in %s" err.message (Uri.to_string err.uri));
-      false
+  (* TODO: check the return value when result is ok *)
+  match result with Result.Ok _ -> true | Result.Error _ -> false
+
+let%test "ERROR: not found" =
+  let module UC = Make (Mock) in
+  let result =
+    Lwt_main.run
+      (UC.exec
+         {
+           uri = DocumentUri.of_path "/interactor/mock/not_found.y";
+           pos = Position.create ~character:1 ~line:0;
+         })
+  in
+  match result with Result.Ok _ -> false | Result.Error _ -> true

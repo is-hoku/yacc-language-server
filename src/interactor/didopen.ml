@@ -11,7 +11,7 @@ module Make (Repo : Input) : Output = struct
   type output = (Text_document.t, error) Result.t Lwt.t
 
   let exec (doc : input) =
-    (* XXX: change position encoding value based on client capabilities *)
+    (* TODO: change position encoding value based on client capabilities *)
     let* d = Repo.register_document (doc.uri, Model.Document.make doc `UTF16) in
     match d.document with
     | Some v -> Lwt.return_ok v.tdoc
@@ -19,7 +19,7 @@ module Make (Repo : Input) : Output = struct
         Lwt.return_error { message = "Cannot open the document"; uri = doc.uri }
 end
 
-let%test _ =
+let%test "OK: valid input" =
   let module UC = Make (Mock) in
   let result =
     Lwt_main.run
@@ -34,3 +34,14 @@ let%test _ =
       print_endline
         (Printf.sprintf "ERROR: %s in %s" err.message (Uri.to_string err.uri));
       false
+
+let%test "could not open the document" =
+  let module UC = Make (Mock) in
+  let result =
+    Lwt_main.run
+      (UC.exec
+         (TextDocumentItem.create ~languageId:"yacc" ~text:"hogehoge"
+            ~uri:(DocumentUri.of_path "/interactor/mock/not_found.y")
+            ~version:1))
+  in
+  match result with Result.Ok _ -> false | Result.Error _ -> true

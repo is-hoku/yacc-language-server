@@ -15,7 +15,7 @@ module Make : Output = struct
     document : Model.Document.t option;
     promotions : int;
         (* The number of promotions for the document *)
-        (* XXX: Semantic tokens cache is required.*)
+        (* TODO: Semantic tokens cache is required.*)
   }
 
   let t = Tbl.create 10
@@ -45,9 +45,9 @@ module Make : Output = struct
         Lwt.return doc)
 end
 
-let%test _ =
+let%test "OK: valid input" =
   let module Repo = Make in
-  let result1, result2 =
+  let result =
     Lwt_main.run
       (let* _ =
          Repo.register_document
@@ -58,26 +58,14 @@ let%test _ =
                   ~version:1)
                `UTF16 )
        in
-       (* OK: this document should be found *)
-       let* result1 =
-         Repo.get_document (DocumentUri.of_path "/document_store/test.y")
-       in
-       (* ERROR: this document should be not found *)
-       let* result2 =
-         Repo.get_document (DocumentUri.of_path "/document_store/not_found.y")
-       in
-       Lwt.return (result1, result2))
+       Repo.get_document (DocumentUri.of_path "/document_store/test.y"))
   in
-  match result1 with
-  | Result.Error err -> (
-      match err with
-      | Not_found uri ->
-          print_endline
-            (Printf.sprintf "ERROR: not found %s" (Uri.to_string uri));
-          false)
-  | Result.Ok _ -> (
-      match result2 with
-      | Result.Ok _ ->
-          print_endline "ERROR: unregister document was found";
-          false
-      | Result.Error err -> ( match err with Not_found _ -> true))
+  match result with Result.Ok _ -> true | Result.Error _ -> false
+
+let%test "ERROR: not found" =
+  let module Repo = Make in
+  let result =
+    Lwt_main.run
+      (Repo.get_document (DocumentUri.of_path "/document_store/not_found.y"))
+  in
+  match result with Result.Ok _ -> false | Result.Error _ -> true

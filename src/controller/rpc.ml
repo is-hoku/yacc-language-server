@@ -54,7 +54,7 @@ module Make (UC : Input) : Output = struct
   let on_request ((req, s) : request_input) =
     let params = req.params in
     let is_initialized = get_initialize_params s in
-    (* XXX: Check client capabilities when adding methods *)
+    (* TODO: Check client capabilities when adding methods *)
     (*let capabilities = get_client_capabilities s in*)
     match req.method_ with
     | "initialize" -> (
@@ -139,10 +139,10 @@ module Make (UC : Input) : Output = struct
   type notification_output = (Jsonrpc.Packet.t option * state) Lwt.t
 
   let on_notification ((notification, s) : notification_input) =
-    (* XXX: add supports for willSave, willSaveWaitUntil, and DidSave notifications *)
+    (* TODO: add supports for willSave, willSaveWaitUntil, and DidSave notifications *)
     let params = notification.params in
     let is_initialized = get_initialize_params s in
-    (* XXX: Check client capabilities when adding methods *)
+    (* TODO: Check client capabilities when adding methods *)
     (*let capabilities = get_client_capabilities s in*)
     match notification.method_ with
     | "initialized" -> (
@@ -236,7 +236,7 @@ module Make (UC : Input) : Output = struct
   let start (input, output) =
     let s = create_state () in
     let rec read_and_write state =
-      (* XXX: process requests in parallel using Lwt.async etc. *)
+      (* TODO: process requests in parallel using Lwt.async etc. *)
       let* request = IO.read input in
       match request with
       | None -> Lwt.return_unit
