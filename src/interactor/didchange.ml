@@ -34,3 +34,28 @@ module Make (Repo : Input) : Output = struct
     | Result.Error (Not_found err) ->
         Lwt.return_error { message = "Not Found"; uri = err }
 end
+
+let%test _ =
+  let module UC = Make (Mock) in
+  let result =
+    Lwt_main.run
+      (UC.exec
+         {
+           uri = DocumentUri.of_path "/interactor/mock/example.y";
+           contents =
+             [
+               TextDocumentContentChangeEvent.create
+                 ~range:
+                   (Range.create
+                      ~end_:(Position.create ~character:2 ~line:0)
+                      ~start:(Position.create ~character:1 ~line:0))
+                 ~rangeLength:1 ~text:"in" ();
+             ];
+         })
+  in
+  match result with
+  | Result.Ok _ -> true
+  | Result.Error err ->
+      print_endline
+        (Printf.sprintf "ERROR: %s in %s" err.message (Uri.to_string err.uri));
+      false

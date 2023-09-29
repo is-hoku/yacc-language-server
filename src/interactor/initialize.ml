@@ -13,7 +13,7 @@ module Make (Repo : Input) : Output = struct
         (`TextDocumentSyncOptions
           (TextDocumentSyncOptions.create ~openClose:true ~change:Incremental ()))
       ~completionProvider:
-        (CompletionOptions.create ~triggerCharacters:[ "i" ]
+        (CompletionOptions.create ~triggerCharacters:[ "i"; " " ]
            ~allCommitCharacters:[] ~resolveProvider:true
            ~completionItem:
              (CompletionOptions.create_completionItem ~labelDetailsSupport:true
@@ -21,3 +21,8 @@ module Make (Repo : Input) : Output = struct
            ~workDoneProgress:false ())
       ()
 end
+
+let%test_unit _ =
+  let module UC = Make (Mock) in
+  let _ = UC.exec () in
+  ()

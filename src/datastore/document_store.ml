@@ -1,4 +1,5 @@
 open Language_server.Import
+open Lwt.Syntax
 
 module type Output = Repository.Document_store.S
 
@@ -43,3 +44,40 @@ module Make : Output = struct
         Tbl.replace t uri doc;
         Lwt.return doc)
 end
+
+let%test _ =
+  let module Repo = Make in
+  let result1, result2 =
+    Lwt_main.run
+      (let* _ =
+         Repo.register_document
+           ( DocumentUri.of_path "/document_store/test.y",
+             Model.Document.make
+               (TextDocumentItem.create ~languageId:"yacc" ~text:"i"
+                  ~uri:(Uri.of_path "/document_store/test.y")
+                  ~version:1)
+               `UTF16 )
+       in
+       (* OK: this document should be found *)
+       let* result1 =
+         Repo.get_document (DocumentUri.of_path "/document_store/test.y")
+       in
+       (* ERROR: this document should be not found *)
+       let* result2 =
+         Repo.get_document (DocumentUri.of_path "/document_store/not_found.y")
+       in
+       Lwt.return (result1, result2))
+  in
+  match result1 with
+  | Result.Error err -> (
+      match err with
+      | Not_found uri ->
+          print_endline
+            (Printf.sprintf "ERROR: not found %s" (Uri.to_string uri));
+          false)
+  | Result.Ok _ -> (
+      match result2 with
+      | Result.Ok _ ->
+          print_endline "ERROR: unregister document was found";
+          false
+      | Result.Error err -> ( match err with Not_found _ -> true))

@@ -65,6 +65,7 @@ include struct
   module PublishDiagnosticsClientCapabilities =
     PublishDiagnosticsClientCapabilities
 
+  module Range = Range
   module ReferenceParams = ReferenceParams
   module Registration = Registration
   module RegistrationParams = RegistrationParams
