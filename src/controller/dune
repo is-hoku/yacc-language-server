@@ -4,4 +4,4 @@
  (libraries language_server usecase service lwt logs logs.fmt logs.lwt)
  (inline_tests)
  (preprocess
-  (pps ppx_expect)))
+  (pps ppx_expect ppx_inline_test)))

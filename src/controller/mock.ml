@@ -1,46 +1,60 @@
 open Language_server.Import
-open Io
-open Lwt.Syntax
 
-let send_request wakener (input, output) =
-  let* () =
-    IO.write output
-      (Jsonrpc.Packet.t_of_yojson
-         (Jsonrpc.Request.yojson_of_t
-            (Jsonrpc.Request.create
-               ~id:(Jsonrpc.Id.t_of_yojson (`Int 0))
-               ~method_:"initialize" ())))
-  in
-  let* () = Lwt_unix.sleep 2. in
-  let* () =
-    IO.write output
-      (Jsonrpc.Packet.t_of_yojson
-         (Jsonrpc.Notification.yojson_of_t
-            (Jsonrpc.Notification.create ~params:(`Assoc [])
-               ~method_:"initialized" ())))
-  in
-  let* () = Lwt_unix.sleep 3. in
-  let* () =
-    IO.write output
-      (Jsonrpc.Packet.t_of_yojson
-         (Jsonrpc.Notification.yojson_of_t
-            (Lsp.Server_notification.to_jsonrpc
-               (Lsp.Server_notification.ShowMessage
-                  (ShowMessageParams.create
-                     ~message:"Hello, this is language server!"
-                     ~type_:MessageType.Info)))))
-  in
-  let* () = Lwt_io.close output in
-  let* () = Lwt_io.close input in
-  Lwt.wakeup wakener ();
-  Lwt.return_unit
+module Initialize = struct
+  type input = unit
+  type output = ServerCapabilities.t
 
-let client () =
-  let sock_path = "mock_socket" in
-  let sock_addr = Lwt_unix.ADDR_UNIX sock_path in
-  let waiter, wakener = Lwt.wait () in
-  let* _server =
-    Lwt_io.establish_server_with_client_address sock_addr
-      (fun _sock_addr (input, output) -> send_request wakener (input, output))
-  in
-  waiter
+  let exec _ = ServerCapabilities.create ()
+end
+
+module DidOpen = struct
+  type input = TextDocumentItem.t
+  type error = { message : string; uri : DocumentUri.t }
+  type output = (Text_document.t, error) Result.t Lwt.t
+
+  let exec (doc : input) =
+    Lwt.return_ok
+      (Text_document.make ~position_encoding:`UTF16
+         (DidOpenTextDocumentParams.create ~textDocument:doc))
+end
+
+module DidChange = struct
+  type input = {
+    uri : DocumentUri.t;
+    contents : TextDocumentContentChangeEvent.t list;
+  }
+
+  type error = { message : string; uri : DocumentUri.t }
+  type output = (Text_document.t, error) Result.t Lwt.t
+
+  let exec (doc : input) =
+    match DocumentUri.to_string doc.uri with
+    | "file:///controller/mock/example.y" ->
+        Lwt.return_ok
+          (Text_document.make ~position_encoding:`UTF16
+             (DidOpenTextDocumentParams.create
+                ~textDocument:
+                  (TextDocumentItem.create ~languageId:"yacc" ~text:"i"
+                     ~uri:(Uri.of_path "controller/mock/example.y")
+                     ~version:1)))
+    | _ -> Lwt.return_error { message = "not found"; uri = doc.uri }
+end
+
+module Completion = struct
+  type input = { uri : DocumentUri.t; pos : Position.t }
+  type error = { message : string; uri : DocumentUri.t }
+  type output = (CompletionItem.t list, error) Result.t Lwt.t
+
+  let exec (item : input) =
+    match DocumentUri.to_string item.uri with
+    | "file:///controller/mock/example.y" ->
+        if item.pos != Position.create ~character:0 ~line:0 then
+          Lwt.return_error { message = "out of bounds"; uri = item.uri }
+        else
+          Lwt.return_ok
+            [
+              CompletionItem.create ~label:"example" ();
+              CompletionItem.create ~label:"sample" ();
+            ]
+    | _ -> Lwt.return_error { message = "not found"; uri = item.uri }
+end

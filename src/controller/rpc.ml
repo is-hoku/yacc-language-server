@@ -70,11 +70,10 @@ module Make (UC : Input) : Output = struct
           ( response_error id
               (Jsonrpc.Response.Error.make ~code:InvalidRequest
                  ~message:"server is shut down" ()),
-            shutdown s )
+            s )
     | Running -> (
         let is_initialized = get_initialize_params s in
         (* TODO: Check client capabilities when adding methods *)
-        (*let capabilities = get_client_capabilities s in*)
         match req.method_ with
         | "initialize" -> (
             Logs.info (fun m -> m "initialize");
@@ -82,6 +81,7 @@ module Make (UC : Input) : Output = struct
             (* Since initialize requests are sent only once, initialize requests are allowed only when uninitialized *)
             | Some p, None -> (
                 let params =
+                  (* TODO: catch the invalid structured value error *)
                   InitializeParams.t_of_yojson
                     (Jsonrpc.Structured.yojson_of_t p)
                 in
@@ -321,3 +321,148 @@ module Make (UC : Input) : Output = struct
     let* () = read_and_write s in
     Lwt.return_unit
 end
+
+let%test_module "tests for the initialize request" =
+  (module struct
+    module SV = Make (Mock)
+
+    let%test "OK: valid initialize request" =
+      let params =
+        `Assoc
+          [
+            ("processId", `Null); ("rootUri", `Null); ("capabilities", `Assoc []);
+          ]
+      in
+      let _packet, state =
+        Lwt_main.run
+          (SV.on_request
+             ( Jsonrpc.Request.create ~id:(`Int 0) ~method_:"initialize" ~params
+                 (),
+               SV.create_state () ))
+      in
+      match SV.get_initialize_params state with None -> false | Some _ -> true
+
+    let%test "OK: update client capabilities" =
+      let params =
+        `Assoc
+          [
+            ("processId", `Null);
+            ("rootUri", `Null);
+            ( "capabilities",
+              `Assoc
+                [
+                  ( "testDocument",
+                    `Assoc
+                      [
+                        ("synchronization", `Assoc [ ("willSave", `Bool true) ]);
+                      ] );
+                ] );
+          ]
+      in
+      let _packet, state =
+        Lwt_main.run
+          (SV.on_request
+             ( Jsonrpc.Request.create ~id:(`Int 0) ~method_:"initialize" ~params
+                 (),
+               SV.create_state () ))
+      in
+      let capabilities = SV.get_client_capabilities state in
+      if
+        capabilities
+        = ClientCapabilities.t_of_yojson (Jsonrpc.Structured.yojson_of_t params)
+      then true
+      else false
+
+    let%test "ERROR: already initialized" =
+      let state = SV.create_state () in
+      let packet, _state =
+        Lwt_main.run
+          (SV.on_request
+             ( Jsonrpc.Request.create ~id:(`Int 0) ~method_:"initialize" (),
+               {
+                 state with
+                 init =
+                   SV.Initialized
+                     {
+                       params =
+                         InitializeParams.create
+                           ~capabilities:(ClientCapabilities.create ())
+                           ();
+                     };
+               } ))
+      in
+      match packet with Notification _ -> true | _ -> false
+
+    let%test "ERROR: server is shut down" =
+      let state = SV.create_state () in
+      let packet, _state =
+        Lwt_main.run
+          (SV.on_request
+             ( Jsonrpc.Request.create ~id:(`Int 0) ~method_:"initialize" (),
+               { state with running_status = SV.Shutdown } ))
+      in
+      match packet with
+      | Response resp -> (
+          match resp.result with
+          | Result.Error { code = InvalidRequest; message = _; data = _ } ->
+              true
+          | _ -> false)
+      | _ -> false
+  end)
+
+let%test_module "tests for the exit notification" =
+  (module struct
+    module SV = Make (Mock)
+
+    let%test "OK: valid exit notification" =
+      let state = SV.create_state () in
+      let _packet, state =
+        Lwt_main.run
+          (SV.on_notification
+             ( Jsonrpc.Notification.create ~method_:"exit" (),
+               { state with running_status = SV.Shutdown } ))
+      in
+      match SV.get_running_status state with Exit 0 -> true | _ -> false
+
+    let%test "ERROR: exit notification is received before shut down" =
+      let _packet, state =
+        Lwt_main.run
+          (SV.on_notification
+             (Jsonrpc.Notification.create ~method_:"exit" (), SV.create_state ()))
+      in
+      match SV.get_running_status state with Exit 1 -> true | _ -> false
+  end)
+
+let%test_module "tests for the initialized notification" =
+  (module struct
+    module SV = Make (Mock)
+
+    let%test "OK: valid initialized notification" =
+      let state = SV.create_state () in
+      let packet, _state =
+        Lwt_main.run
+          (SV.on_notification
+             ( Jsonrpc.Notification.create ~method_:"initialized" (),
+               {
+                 state with
+                 init =
+                   SV.Initialized
+                     {
+                       params =
+                         InitializeParams.create
+                           ~capabilities:(ClientCapabilities.create ())
+                           ();
+                     };
+               } ))
+      in
+      match packet with None -> true | Some _ -> false
+
+    let%test "ERROR: uninitialized" =
+      let packet, _state =
+        Lwt_main.run
+          (SV.on_notification
+             ( Jsonrpc.Notification.create ~method_:"initialized" (),
+               SV.create_state () ))
+      in
+      match packet with None -> false | Some _ -> true
+  end)
