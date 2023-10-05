@@ -8,10 +8,13 @@ let main () =
     [
       ( "--pipe",
         Arg.Set_string socket_path,
-        "a socket/pipe file name given from vscode" );
+        "use pipes (Windows) or socket files (Linux, Mac) as the communication \
+         channel. The pipe / socket file name is passed as the next arg or \
+         with --pipe=." );
       ( "--socket",
         Arg.Set_int socket_port,
-        "a socket port number given from vscode" );
+        "uses a socket as the communication channel. The port is passed as \
+         next arg or with --port=." );
     ]
   in
   let usage_msg =
@@ -19,9 +22,9 @@ let main () =
      --socket=[a socket port number given from vscode]"
   in
   Arg.parse options (fun _ -> ()) usage_msg;
-  let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
   let module Server =
     Controller.Rpc.Make (Interactor.Lsp.Make (Datastore.Document_store.Make)) in
+  let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
   Lwt_io.with_connection sock_addr Server.start
 
 (*
