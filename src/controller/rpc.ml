@@ -77,9 +77,9 @@ module Make (UC : Input) : Output = struct
         match req.method_ with
         | "initialize" -> (
             Logs.info (fun m -> m "initialize");
-            match (params, is_initialized) with
+            match params with
             (* Since initialize requests are sent only once, initialize requests are allowed only when uninitialized *)
-            | Some p, None -> (
+            | Some p -> (
                 let params =
                   (* TODO: catch the invalid structured value error *)
                   InitializeParams.t_of_yojson
@@ -102,18 +102,15 @@ module Make (UC : Input) : Output = struct
                         new_state )
                 | None ->
                     Lwt.return
-                      ( show_message_notification MessageType.Error
-                          "failed initialize",
+                      ( response_error id
+                          (Jsonrpc.Response.Error.make ~code:InvalidRequest
+                             ~message:"already initialized" ()),
                         s ))
-            | _, Some _ ->
+            | None ->
                 Lwt.return
-                  ( show_message_notification MessageType.Error
-                      "already initialized",
-                    s )
-            | None, _ ->
-                Lwt.return
-                  ( show_message_notification MessageType.Error
-                      "parameters are not found",
+                  ( response_error id
+                      (Jsonrpc.Response.Error.make ~code:InvalidParams
+                         ~message:"parameters are not found" ()),
                     s ))
         | "textDocument/completion" -> (
             Logs.info (fun m -> m "completion");
@@ -135,31 +132,52 @@ module Make (UC : Input) : Output = struct
                         s )
                 | Result.Error err ->
                     Lwt.return
-                      ( show_message_notification MessageType.Error
-                          (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
-                             err.message),
+                      ( response_error id
+                          (Jsonrpc.Response.Error.make ~code:InternalError
+                             ~message:
+                               (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                                  err.message)
+                             ()),
                         s ))
             | _, None ->
                 Lwt.return
-                  ( show_message_notification MessageType.Error "uninitialized",
+                  ( response_error id
+                      (Jsonrpc.Response.Error.make ~code:ServerNotInitialized
+                         ~message:"uninitialized" ()),
                     s )
             | None, _ ->
                 Lwt.return
-                  ( show_message_notification MessageType.Error
-                      "parameters are not found",
+                  ( response_error id
+                      (Jsonrpc.Response.Error.make ~code:InvalidParams
+                         ~message:"parameters are not found" ()),
                     s ))
-        | "shutdown" ->
+        | "shutdown" -> (
             Logs.info (fun m -> m "shutdown");
-            Lwt.return (response_ok id `Null, shutdown s)
-        | _method ->
+            match is_initialized with
+            | None ->
+                Lwt.return
+                  ( response_error id
+                      (Jsonrpc.Response.Error.make ~code:ServerNotInitialized
+                         ~message:"uninitialized" ()),
+                    s )
+            | Some _ -> Lwt.return (response_ok id `Null, shutdown s))
+        | _method -> (
             Logs.info (fun m ->
                 m "unknown: %s"
                   (Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)));
-            Lwt.return
-              ( show_message_notification MessageType.Log
-                  ("unknown request method: " ^ _method
-                  ^ Yojson.Safe.to_string (Jsonrpc.Request.yojson_of_t req)),
-                s ))
+            match is_initialized with
+            | None ->
+                Lwt.return
+                  ( response_error id
+                      (Jsonrpc.Response.Error.make ~code:ServerNotInitialized
+                         ~message:"uninitialized" ()),
+                    s )
+            | Some _ ->
+                Lwt.return
+                  ( response_error id
+                      (Jsonrpc.Response.Error.make ~code:MethodNotFound
+                         ~message:"unknown request method" ()),
+                    s )))
 
   type notification_input = Jsonrpc.Notification.t * state
   type notification_output = (Jsonrpc.Packet.t option * state) Lwt.t
@@ -169,9 +187,9 @@ module Make (UC : Input) : Output = struct
     let params = notification.params in
     let is_initialized = get_initialize_params s in
     (* TODO: Check client capabilities when adding methods *)
-    (*let capabilities = get_client_capabilities s in*)
     match get_running_status s with
-    | Shutdown | Exit _ -> (
+    | Exit _ -> (* ignore notifications *) Lwt.return (None, s)
+    | Shutdown -> (
         match notification.method_ with
         | "exit" ->
             Logs.info (fun m -> m "exit");
@@ -182,16 +200,10 @@ module Make (UC : Input) : Output = struct
             Lwt.return (None, s))
     | Running -> (
         match notification.method_ with
-        | "initialized" -> (
+        | "initialized" ->
             Logs.info (fun m -> m "initialized");
-            match is_initialized with
-            | Some _ -> Lwt.return (None, s)
-            | None ->
-                Lwt.return
-                  ( Some
-                      (show_message_notification MessageType.Error
-                         "uninitialized"),
-                    s ))
+            (* The server can use the initialized notification, for example, to dynamically register capabilities. *)
+            Lwt.return (None, s)
         | "textDocument/didOpen" -> (
             Logs.info (fun m -> m "textDocument/didOpen");
             match (params, is_initialized) with
@@ -207,20 +219,19 @@ module Make (UC : Input) : Output = struct
                 | Result.Error err ->
                     Lwt.return
                       ( Some
-                          (show_message_notification MessageType.Error
+                          (show_message_notification MessageType.Log
                              (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
                                 err.message)),
                         s ))
             | _, None ->
                 Lwt.return
                   ( Some
-                      (show_message_notification MessageType.Error
-                         "uninitialized"),
+                      (show_message_notification MessageType.Log "uninitialized"),
                     s )
             | None, _ ->
                 Lwt.return
                   ( Some
-                      (show_message_notification MessageType.Error
+                      (show_message_notification MessageType.Log
                          "parameters are not found"),
                     s ))
         | "textDocument/didChange" -> (
@@ -243,20 +254,19 @@ module Make (UC : Input) : Output = struct
                 | Result.Error err ->
                     Lwt.return
                       ( Some
-                          (show_message_notification MessageType.Error
+                          (show_message_notification MessageType.Log
                              (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
                                 err.message)),
                         s ))
             | _, None ->
                 Lwt.return
                   ( Some
-                      (show_message_notification MessageType.Error
-                         "uninitialized"),
+                      (show_message_notification MessageType.Log "uninitialized"),
                     s )
             | None, _ ->
                 Lwt.return
                   ( Some
-                      (show_message_notification MessageType.Error
+                      (show_message_notification MessageType.Log
                          "parameters are not found"),
                     s ))
         | "exit" ->
@@ -375,10 +385,17 @@ let%test_module "tests for the initialize request" =
 
     let%test "ERROR: already initialized" =
       let state = SV.create_state () in
+      let params =
+        `Assoc
+          [
+            ("processId", `Null); ("rootUri", `Null); ("capabilities", `Assoc []);
+          ]
+      in
       let packet, _state =
         Lwt_main.run
           (SV.on_request
-             ( Jsonrpc.Request.create ~id:(`Int 0) ~method_:"initialize" (),
+             ( Jsonrpc.Request.create ~id:(`Int 0) ~method_:"initialize" ~params
+                 (),
                {
                  state with
                  init =
@@ -391,7 +408,13 @@ let%test_module "tests for the initialize request" =
                      };
                } ))
       in
-      match packet with Notification _ -> true | _ -> false
+      match packet with
+      | Response resp -> (
+          match resp.result with
+          | Result.Error { code = InvalidRequest; message = _; data = _ } ->
+              true
+          | _ -> false)
+      | _ -> false
 
     let%test "ERROR: server is shut down" =
       let state = SV.create_state () in
@@ -456,13 +479,4 @@ let%test_module "tests for the initialized notification" =
                } ))
       in
       match packet with None -> true | Some _ -> false
-
-    let%test "ERROR: uninitialized" =
-      let packet, _state =
-        Lwt_main.run
-          (SV.on_notification
-             ( Jsonrpc.Notification.create ~method_:"initialized" (),
-               SV.create_state () ))
-      in
-      match packet with None -> false | Some _ -> true
   end)

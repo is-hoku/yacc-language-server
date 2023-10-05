@@ -27,15 +27,4 @@ let main () =
   let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
   Lwt_io.with_connection sock_addr Server.start
 
-(*
-let () =
-  Lwt_main.run
-    (Lwt.join
-       [
-         client ();
-         (let* () = Lwt_unix.sleep 3. in
-          main ());
-       ])
-*)
-
 let () = Lwt_main.run (main ())
