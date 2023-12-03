@@ -1,0 +1,9 @@
+(library
+ (name static_analyzer)
+ (public_name language_server.static_analyzer)
+ (libraries language_server))
+
+(menhir
+ (modules syntax))
+
+(ocamllex lexer)

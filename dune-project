@@ -1,5 +1,7 @@
 (lang dune 3.7)
 
+(using menhir 2.1)
+
 (name language_server)
 
 (generate_opam_files true)

@@ -13,7 +13,8 @@ module Make (Repo : Input) : Output = struct
         (`TextDocumentSyncOptions
           (TextDocumentSyncOptions.create ~openClose:true ~change:Incremental ()))
       ~completionProvider:
-        (CompletionOptions.create ~triggerCharacters:[ "i"; " " ]
+        (CompletionOptions.create
+           ~triggerCharacters:[ "i" ] (* set " " as triggerCharacters *)
            ~allCommitCharacters:[] ~resolveProvider:true
            ~completionItem:
              (CompletionOptions.create_completionItem ~labelDetailsSupport:true

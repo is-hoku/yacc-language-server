@@ -1,4 +1,4 @@
 (test
  (name language_server_tests)
- (libraries language_server language_server.controller language_server.interactor language_server.datastore)
+ (libraries language_server language_server.controller language_server.interactor language_server.datastore static_analyzer)
 )
