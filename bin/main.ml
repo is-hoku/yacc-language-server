@@ -2,10 +2,14 @@ let main () =
   Logs.set_reporter (Logs_fmt.reporter ());
   Logs.set_level (Some Logs.Info);
   Logs.info (fun m -> m "start");
+  let use_stdio = ref false in
   let socket_path = ref "" in
   let socket_port = ref 0 in
   let options =
     [
+      ( "--stdio",
+        Arg.Unit (fun () -> use_stdio := true),
+        " uses stdio as the communication channel." );
       ( "--pipe",
         Arg.Set_string socket_path,
         "use pipes (Windows) or socket files (Linux, Mac) as the communication \
@@ -18,13 +22,15 @@ let main () =
     ]
   in
   let usage_msg =
-    "Usage: ./main.exe --pipe=[a socket/pipe file name given from vscode] \
-     --socket=[a socket port number given from vscode]"
+    "Usage: ./main.exe --stdio --pipe=[a socket/pipe file name given from \
+     vscode] --socket=[a socket port number given from vscode]"
   in
   Arg.parse options (fun _ -> ()) usage_msg;
   let module Server =
     Controller.Rpc.Make (Interactor.Lsp.Make (Datastore.Document_store.Make)) in
-  let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
-  Lwt_io.with_connection sock_addr Server.start
+  if !use_stdio then Server.start (Lwt_io.stdin, Lwt_io.stdout)
+  else
+    let sock_addr = Lwt_unix.ADDR_UNIX !socket_path in
+    Lwt_io.with_connection sock_addr Server.start
 
 let () = Lwt_main.run (main ())
