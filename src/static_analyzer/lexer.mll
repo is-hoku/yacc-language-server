@@ -5,17 +5,72 @@ open Language_server.Import
 
 exception Lex_error of position * string
 
-type section =
-    | Prologue
-    | BisonDecls
-    | GrammarRules
-    | Epilogue
-    | Code
+type state =
+    | INITIAL
+    | SC_YACC_COMMENT (* A C-like comment in directives/rules. *)
+    | SC_ESCAPED_CHARACTER (* Characters and strings in directives/rules. *)
+    | SC_ESCAPED_STRING (* Characters and strings in directives/rules. *)
+    | SC_ESCAPED_TSTRING (* Characters and strings in directives/rules. *)
+    | SC_AFTER_IDENTIFIER (* A identifier was just read in directives/rules.  Special state to capture the sequence 'identifier :'. *)
+    | SC_TAG (* POSIX says that a tag must be both an id and a C union member, but historically almost any character is allowed in a tag.  We disallow NUL, as this simplifies our implementation.  We match angle brackets in nested pairs: several languages use them for generics/template types. *)
+    (* Four types of user code *)
+    | SC_PROLOGUE (* prologue (code between '%{' '%}' in the first section, before %%) *)
+    | SC_BRACED_CODE (* actions, printers, union, etc, (between braced in the middle section) *)
+    | SC_EPILOGUE (* epilogue (everything after the second %%). *)
+    | SC_PREDICATE (* predicate (code between '%?{' and '{' in middle section) *)
+    | SC_BRACKETED_ID (* Bracketed identifiers support. *)
+    | SC_RETURN_BRACKETED_ID (* Bracketed identifiers support. *)
+    | SC_COMMENT (* C and C++ comments in code. *)
+    | SC_LINE_COMMENT (* C and C++ comments in code. *)
+    | SC_CHARACTER (* Strings and characters in code. *)
+    | SC_STRING (* Strings and characters in code. *)
+    | RETURN_EOF (* return EOF *)
 
-let initial_stack =
-    let stack = Stack.create () in
-    Stack.push BisonDecls stack;
-    stack
+let state = ref INITIAL
+let bracketed_id_context_state = ref INITIAL
+let bracketed_id_str = ref None
+let saved_pos = ref {
+    pos_fname = "initial";
+    pos_lnum = 0;
+    pos_bol = 0;
+    pos_cnum = 0;
+}
+let percent_percent_count = ref 0
+let context_state = ref INITIAL
+let nesting = ref 0
+
+let begin_ new_state =
+    state := new_state
+
+let buf = Buffer.create 256
+
+let complain msg lexbuf =
+    let pos = lexeme_start_p lexbuf in
+    raise (Lex_error (pos, msg))
+
+let string_grow str =
+  Buffer.add_string buf str
+
+let string_finish () =
+  let result = Buffer.contents buf in
+  Buffer.clear buf;
+  result
+
+let string_1grow char_ =
+  Buffer.add_char buf char_
+
+let string_grow_escape c =
+    let valid = (0 < c && c <= 255) in
+    if not valid then
+        complain (Printf.sprintf "invalid number after \\-escape: %s" (lexeme lexbuf)) lexbuf;
+    if !state == SC_ESCAPED_CHARACTER then(
+        if valid then
+            string_1grow (char_of_int c)
+        else
+            string_1grow ('?'))
+    else
+        string_grow (lexeme lexbuf)
+
 
 let get_range lexbuf =
     let start_p = lexeme_start_p lexbuf in
@@ -24,176 +79,544 @@ let get_range lexbuf =
     let end_ = Position.create ~character:(end_p.pos_cnum - end_p.pos_bol) ~line:end_p.pos_lnum in
     Range.create ~end_ ~start
 
+let save_pos lexbuf =
+  saved_pos := lexbuf.lex_curr_p
+
+let rollback lexbuf =
+  lexbuf.lex_curr_p <- !saved_pos
+
 let report_error msg lexbuf =
     let pos = lexeme_start_p lexbuf in
     raise (Lex_error (pos, msg))
 
-let pop stack msg lexbuf =
-    if Stack.length stack > 0 then
-        Stack.pop stack |> ignore
-    else
-        report_error msg lexbuf
+let return_eof () =
+    EOF
+
+let unexpected_eof c token lexbuf =
+    begin_ RETURN_EOF;
+    complain (Printf.sprintf "missing %s at end of file" c) lexbuf;
+    match token with
+    | Some t -> token
+    | None -> ()
+
+let unexpected_newline c lexbuf =
+    complain (Printf.sprintf "missing %s at end of line" c) lexbuf;
+    newline lexbuf
+
+let deprecated_directive d =
+    complain (Printf.sprintf "deprecated directive: %s, use %s" d) lexbuf;
 }
 
-let white = [' ' '\t']+
-let small = ['a'-'z']
-let capital = ['A'-'Z']
-let digit = ['0'-'9']
-let symbol = ((small | capital | '_' | '.')+ (small | capital | digit | '_' | '.' | '-')*)
-let hex = (['a'-'f'] | ['A'-'F'] | digit)+
-let directive = (small (small | '-')*)
+let letter = ['.' 'a'-'z' 'A'-'Z' '_']
+let id = letter (letter | ['-' '0'-'9'])*
+let int = ['0'-'9']+
+let xint = '0' ['x' 'X'] ['0'-'9' 'a'-'f' 'A'-'F']+
+let hex_digit = ['0'-'9' 'a'-'f' 'A'-'F']
 
-rule prologue stack = parse
-| white { prologue stack lexbuf }
-| '\n' { new_line lexbuf; prologue stack lexbuf }
-| "/*" { comment stack lexbuf; prologue stack lexbuf }
-| "*/" { report_error "expected character /*" lexbuf }
-| "//" { comment_line stack lexbuf; prologue stack lexbuf }
-| '"' { ignore_string stack lexbuf; prologue stack lexbuf }
-| "%}" { pop stack "too many %}" lexbuf; Stack.push BisonDecls stack; RPROLOGUE(get_range lexbuf) }
-| eof { report_error "unexpected end of file in a prologue section" lexbuf }
+let eol = '\n' | '\r' '\n'
 
-and bison_decls stack = parse
-| white { prologue stack lexbuf }
-| '\n' { new_line lexbuf; prologue stack lexbuf }
-| "/*" { comment stack lexbuf; bison_decls stack lexbuf }
-| "*/" { report_error "expected character /*" lexbuf }
-| "//" { comment_line stack lexbuf; bison_decls stack lexbuf }
-| "%}" { RPROLOGUE(get_range lexbuf) }
-| "%{" { pop stack "too many %{" lexbuf; Stack.push Prologue stack; LPROLOGUE(get_range lexbuf) }
-| "%%" { pop stack "too many %%" lexbuf; Stack.push GrammarRules stack; DELIMITER(get_range lexbuf) }
-| '"' { string_literal stack 0 (Buffer.create 256) lexbuf }
-| '%' (directive as d) {
-    match d with
-    | "require" -> REQUIRE(get_range lexbuf)
-    | "union" -> UNION(get_range lexbuf)
-    | "token" -> TOKEN(get_range lexbuf)
-    | "right" -> RIGHT(get_range lexbuf)
-    | "left" -> LEFT(get_range lexbuf)
-    | "precedence" -> PRECEDENCE(get_range lexbuf)
-    | "nonassoc" -> NONASSOC(get_range lexbuf)
-    | "nterm" -> NTERM(get_range lexbuf)
-    | "type" -> TYPE(get_range lexbuf)
-    | "initial-action" -> INITIALACTION(get_range lexbuf)
-    | "destructor" -> DESTRUCTOR(get_range lexbuf)
-    | "printer" -> PRINTER(get_range lexbuf)
-    | "expect" -> EXPECT(get_range lexbuf)
-    | "expect-rr" -> EXPECTRR(get_range lexbuf)
-    | "debug" -> DEBUG(get_range lexbuf)
-    | "start" -> START(get_range lexbuf)
-    | "code" -> CODE(get_range lexbuf)
-    | "define" -> DEFINE(get_range lexbuf)
-    | "defines" -> DEFINES(get_range lexbuf)
-    | "file-prefix" -> FILEPREFIX(get_range lexbuf)
-    | "header" -> HEADER(get_range lexbuf)
-    | "language" -> LANGUAGE(get_range lexbuf)
-    | "locations" -> LOCATIONS(get_range lexbuf)
-    | "name-prefix" -> NAMEPREFIX(get_range lexbuf)
-    | "no-lines" -> NOLINES(get_range lexbuf)
-    | "output" -> OUTPUT(get_range lexbuf)
-    | "pre-parser" -> PUREPARSER(get_range lexbuf)
-    | "skeleton" -> SKELETON(get_range lexbuf)
-    | "token-table" -> TOKENTABLE(get_range lexbuf)
-    | "verbose" -> VERBOSE(get_range lexbuf)
-    | "yacc" -> YACC(get_range lexbuf)
-    | _ -> report_error "invalid directive" lexbuf
-    }
-| "<" { LT(get_range lexbuf) }
-| ">" { GT(get_range lexbuf) }
-| "*" { ASTERISK(get_range lexbuf) }
-| "{" { Stack.push Code stack; LBRACE(get_range lexbuf) }
-| "}" { RBRACE(get_range lexbuf) }
-| "." { DOT(get_range lexbuf) }
-| digit+ { DECIMAL ((get_range lexbuf), (int_of_string (lexeme lexbuf))) }
-| ("0x" | "0X") hex+ { HEXADECIMAL ((get_range lexbuf), int_of_string (lexeme lexbuf))}
-| symbol { SYMBOL ((get_range lexbuf), (lexeme lexbuf)) }
-| _ { report_error (Printf.sprintf "unexpected character %s" (lexeme lexbuf)) lexbuf }
-| eof { EOF(get_range lexbuf) }
+let char = ['\000'-'\255']
+let mbchar =
+    ['\x09' '\x0A' '\x0D' '\x20'-'\x7E']
+  | ['\xC2'-'\xDF']['\x80'-'\xBF']
+  | '\xE0'['\xA0'-'\xBF']['\x80'-'\xBF']
+  | ['\xE1'-'\xEC' '\xEE' '\xEF']['\x80'-'\xBF']['\x80'-'\xBF']
+  | '\xED'['\x80'-'\x9F']['\x80'-'\xBF']
+  | '\xF0'['\x90'-'\xBF']['\x80'-'\xBF']['\x80'-'\xBF']
+  | ['\xF1'-'\xF3']['\x80'-'\xBF']['\x80'-'\xBF']['\x80'-'\xBF']
+  | '\xF4'['\x80'-'\x8F']['\x80'-'\xBF']['\x80'-'\xBF']
 
-and grammar_rules stack = parse
-| white { grammar_rules stack lexbuf }
-| '\n' { new_line lexbuf; prologue stack lexbuf }
-| "/*" { comment stack lexbuf; grammar_rules stack lexbuf }
-| "*/" { report_error "expected character /*" lexbuf }
-| "//" { comment_line stack lexbuf; grammar_rules stack lexbuf }
-| "%%" { pop stack "too many %%" lexbuf; Stack.push Epilogue stack; DELIMITER(get_range lexbuf) }
-| "{" { Stack.push Code stack; LBRACE(get_range lexbuf) }
-| "}" { RBRACE(get_range lexbuf) }
-| "[" { LBRACK(get_range lexbuf) }
-| "]" { RBRACK(get_range lexbuf) }
-| ":" { COLON(get_range lexbuf) }
-| ";" { SEMICOLON(get_range lexbuf) }
-| "|" { PIPE(get_range lexbuf) }
-| digit+ { DECIMAL ((get_range lexbuf), (int_of_string (lexeme lexbuf))) }
-| ("0x" | "0X") hex+ { HEXADECIMAL ((get_range lexbuf), (int_of_string (lexeme lexbuf))) }
-| symbol { SYMBOL ((get_range lexbuf), (lexeme lexbuf)) }
-| _ { report_error (Printf.sprintf "unexpected character %s" (lexeme lexbuf)) lexbuf }
-| eof { EOF(get_range lexbuf) }
+let splice = ('\\' [' ' '\t' '\011' '\012']* eol)*
 
-and comment stack = parse
-| "*/" { () }
-| _ { comment stack lexbuf }
-| eof { report_error "missing terminating */ character" lexbuf }
+let sp = [' ' '\t']*
+let eqopt = (sp '=')?
 
-and comment_line stack = parse
-| "\n" { new_line lexbuf }
-| _ { comment_line stack lexbuf }
+rule initial = parse
+  | "%binary"                               { PERCENT_NONASSOC }
+  | "%code"                                 { PERCENT_CODE }
+  | "%debug"                                { RETURN_PERCENT_FLAG ("parse.trace") }
+  | "%default-prec"                         { PERCENT_DEFAULT_PREC }
+  | "%define"                               { PERCENT_DEFINE }
+  | "%defines"                              { PERCENT_HEADER } (* Deprecated in 3.8. *)
+  | "%destructor"                           { PERCENT_DESTRUCTOR }
+  | "%dprec"                                { PERCENT_DPREC }
+  | "%empty"                                { PERCENT_EMPTY }
+  | "%expect"                               { PERCENT_EXPECT }
+  | "%expect-rr"                            { PERCENT_EXPECT_RR }
+  | "%file-prefix"                          { PERCENT_FILE_PREFIX (lexeme lexbuf) }
+  | "%glr-parser"                           { PERCENT_GLR_PARSER }
+  | "%header"                               { PERCENT_HEADER }
+  | "%initial-action"                       { PERCENT_INITIAL_ACTION }
+  | "%language"                             { PERCENT_LANGUAGE }
+  | "%left"                                 { PERCENT_LEFT }
+  | "%lex-param"                            { PERCENT_PARAM ("lex") }
+  | "%locations"                            { PERCENT_FLAG ("locations") }
+  | "%merge"                                { PERCENT_MERGE }
+  | "%no-default-prec"                      { PERCENT_NO_DEFAULT_PREC }
+  | "%no-lines"                             { PERCENT_NO_LINES }
+  | "%nonassoc"                             { PERCENT_NONASSOC }
+  | "%nondeterministic-parser"              { PERCENT_NONDETERMINISTIC_PARSER }
+  | "%nterm"                                { PERCENT_NTERM }
+  | "%output"                               { PERCENT_OUTPUT }
+  | "%param"                                { PERCENT_PARAM ("both") }
+  | "%parse-param"                          { PERCENT_PARAM ("parse") }
+  | "%prec"                                 { PERCENT_PREC }
+  | "%precedence"                           { PERCENT_PRECEDENCE }
+  | "%printer"                              { PERCENT_PRINTER }
+  | "%require"                              { PERCENT_REQUIRE }
+  | "%right"                                { PERCENT_RIGHT }
+  | "%skeleton"                             { PERCENT_SKELETON }
+  | "%start"                                { PERCENT_START }
+  | "%term"                                 { PERCENT_TOKEN }
+  | "%token"                                { PERCENT_TOKEN }
+  | "%token-table"                          { PERCENT_TOKEN_TABLE }
+  | "%type"                                 { PERCENT_TYPE }
+  | "%union"                                { PERCENT_UNION }
+  | "%verbose"                              { PERCENT_VERBOSE }
+  | "%yacc"                                 { PERCENT_YACC }
 
-and string_literal stack length buf = parse
-| '"' { if length >= 2 then STRING ((get_range lexbuf), (Buffer.contents buf)) else report_error "a literal string token must contain two or more characters" lexbuf }
-| '\\' 'a' { (* OCaml does not support '\a' so ignore input *) string_literal stack (length + 1) buf lexbuf }
-| '\\' 'b' { Buffer.add_char buf '\b'; string_literal stack (length + 1) buf lexbuf }
-| '\\' 'f' { (* OCaml does not support '\f' so ignore input *) string_literal stack (length + 1) buf lexbuf }
-| '\\' 'n' { Buffer.add_char buf '\n'; string_literal stack (length + 1) buf lexbuf }
-| '\\' 'r' { Buffer.add_char buf '\r'; string_literal stack (length + 1) buf lexbuf }
-| '\\' 't' { Buffer.add_char buf '\t'; string_literal stack (length + 1) buf lexbuf }
-| '\\' 'v' { (* OCaml does not support '\v' so ignore input *) string_literal stack (length + 1) buf lexbuf }
-| '\\' '\\' { Buffer.add_char buf '\\'; string_literal stack (length + 1) buf lexbuf }
-| '\\' '\'' { Buffer.add_char buf '\''; string_literal stack (length + 1) buf lexbuf }
-| '\\' '"' { Buffer.add_char buf '"'; string_literal stack (length + 1) buf lexbuf }
-| '\\' '?' { Buffer.add_char buf '?'; string_literal stack (length + 1) buf lexbuf }
-(*
-| '\\' 'x' hex+ { read_hex hex lexbuf; string_literal stack (length + 1) buf lexbuf }
-| '\\' 'u' hex0 hex1 hex2 hex3 { read_unicode_4digits stack hex0 hex1 hex2 hex3 lexbuf; string_literal stack (length + 1) buf lexbuf }
-| '\\' 'U' hex0 hex1 hex2 hex3 hex4 hex5 hex6 hex7 { read_unicode_8digits stack hex0 hex1 hex2 hex3 hex4 hex5 hex6 hex7 lexbuf; string_literal stack (length + 1) buf lexbuf }
-| '\\' { read_octal stack buf lexbuf; string_literal stack (length + 1) buf lexbuf }
-*)
-| ( '!' | '#' | '%' | '&' | '(' | ')' | '*' | '+' | ',' | '-' | '.' | '/' | ':' | ';' | '<' | '=' | '>' | '[' | ']' | '^' | '_' | '{' | '|' | '}' | '~' | white | small | capital | digit )+ { Buffer.add_string buf (lexeme lexbuf); string_literal stack (length + 1) buf lexbuf }
-| _ { report_error (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf }
-| eof { report_error "missing terminating \" character" lexbuf }
+  (* Deprecated since Bison 2.3b (2008-05-27), but the warning is
+     issued only since Bison 3.4. *)
+  | "%pure" ['-' '_'] "parser"              { PERCENT_PURE_PARSER (lexeme lexbuf) }
 
+  (* Deprecated since Bison 3.0 (2013-07-25), but the warning is
+     issued only since Bison 3.3. *)
+  | "%error-verbose"                        { PERCENT_ERROR_VERBOSE (lexeme lexbuf) }
 
-and ignore_string stack = parse
-(* TODO: check escape sequences like '\"' *)
-| '"' { () }
-| _ { ignore_string stack lexbuf }
-| eof { report_error "missing terminating \" character" lexbuf }
+  (* Deprecated since Bison 2.6 (2012-07-19), but the warning is
+     issued only since Bison 3.3. *)
+  | "%name" ['-' '_'] "prefix" eqopt sp     { PERCENT_NAME_PREFIX (lexeme lexbuf) }
 
-and epilogue stack = parse
-| eof { EOF(get_range lexbuf) }
+  (* Deprecated since Bison 2.7.90, 2012. *)
+  | "%default" ['-' '_'] "prec"             { deprecated_directive ("%default-prec") }
+  | "%error" ['-' '_'] "verbose"            { PERCENT_ERROR_VERBOSE (lexeme lexbuf) }
+  | "%expect" ['-' '_'] "rr"                { deprecated_directive ("%expect-rr") }
+  | "%file-prefix" eqopt                    { PERCENT_FILE_PREFIX (lexeme lexbuf) }
+  | "%fixed" ['-' '_'] "output" ['-' '_'] "files"   { deprecated_directive ("%output \"y.tab.c\"") }
+  | "%no" ['-' '_'] "default" ['-' '_'] "prec"      { deprecated_directive ("%no-default-prec") }
+  | "%no" ['-' '_'] "lines"                 { deprecated_directive ("%no-lines") }
+  | "%output" eqopt                         { deprecated_directive ("%output") }
+  | "%token" ['-' '_'] "table"              { deprecated_directive ("%token-table") }
 
-and code stack = parse
-| white { code stack lexbuf }
-| '\n' { new_line lexbuf; prologue stack lexbuf }
-| "/*" { comment stack lexbuf; code stack lexbuf }
-| "*/" { report_error "expected character /*" lexbuf }
-| "//" { comment_line stack lexbuf; code stack lexbuf }
-| '"' { ignore_string stack lexbuf; code stack lexbuf }
-| '@' digit as num { POSITIONAL(get_range lexbuf, int_of_string num) }
-| '@' '$' { RESULTPOSITIONAL(get_range lexbuf) }
-| '@' '[' symbol as name ']' { NAMEDPOSITIONAL(get_range lexbuf, name) }
-| '$' digit as num { SEMANTIC(get_range lexbuf, int_of_string num) }
-| '$' '$' { RESULTSEMANTIC(get_range lexbuf) }
-| '$' '[' symbol as name ']' { NAMEDSEMANTIC(get_range lexbuf, name) }
-| '}' { pop stack "not found return section" lexbuf; RBRACE(get_range lexbuf) }
-| eof { report_error "missing terminating } character" lexbuf }
+  | "%" id                                  { complain (Printf.sprintf "invalid directive: %s" (lexeme lexbuf)) lexbuf }
+
+  | ':'     { COLON }
+  | '='     { EQUAL }
+  | '|'     { PIPE }
+  | ';'     { SEMICOLON }
+
+  | id      {
+      bracketed_id_str := None;
+      begin_ SC_AFTER_IDENTIFIER
+  }
+  | int     { INT_LITERAL (int_of_string (lexeme lexbuf)) }
+  | xint    { INT_LITERAL (int_of_string (lexeme lexbuf)) }
+  (* Identifiers may not start with a digit.  Yet, don't silently
+     accept "1FOO" as "1 FOO".  *)
+  | int id  {
+      complain (Printf.sprintf "invalid identifier: %s" (lexeme lexbuf)) lexbuf ;
+      GRAM_error
+  }
+
+  (* Characters. *)
+  | "'"     { begin_ SC_ESCAPED_CHARACTER }
+
+  (* Strings. *)
+  | '"'    { string_1grow '"'; begin_ SC_ESCAPED_STRING }
+  | "_(\""  { string_1grow '"'; begin_ SC_ESCAPED_TSTRING }
+
+  (* Prologue. *)
+  | "%{"    { begin_ SC_PROLOGUE }
+
+  (* Code in between braces. *)
+  | '{'     {
+      string_grow (lexeme lexbuf);
+      nesting := 0;
+      begin_ SC_BRACED_CODE
+  }
+
+  (* Semantic predicate. *)
+  | "%?" ([' ' '\t' '\011' '\012'] | eol)* '{'    {
+      string_grow (lexeme lexbuf);
+      nesting := 0;
+      begin_ SC_PREDICATE
+  }
+
+  (* A type. *)
+  | "<*>"   { TAG_ANY }
+  | "<>"    { TAG_NONE }
+  | '<'     { nesting := 0; begin_ SC_TAG }
+
+  | "%%"    {
+      if (incr percent_percent_count) == 2 then
+          begin_ SC_EPILOGUE
+          PERCENT_PERCENT
+  }
+
+  | '['     {
+      bracketed_id_str := None
+      bracketed_id_context_state := !state;
+      begin_ SC_BRACKETED_ID
+  }
+
+  | [^ '\\' '[' 'A'-'Z' 'a'-'z' '0'-'9' '_' '<' '>' '{' '}' '"' '\'' '*' ';' '|' '=' '/' ',' '\r' '\n' '\t' '\011' '\012']+ | char {
+      complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
+      GRAM_error
+  }
+
+  | eof { EOF }
+  | _   { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
+
+(* INITIAL,SC_AFTER_IDENTIFIER,SC_BRACKETED_ID,SC_RETURN_BRACKETED_ID *)
+and common_initial_scafteridentifier_scbracketedid_screturnbracketedid = parse
+  (* Comments and white space. *)
+  | ','                                     { complain "stray ',' treated as white space" lexbuf }
+  | [' ' '\t' '\r' '\011' '\012'] eol       { new_line lexbuf }
+  | "//" [^ '\n' '\r']* eol                       { (* ignore *) }
+  | "/*"                                    { context_state := !state; begin_ SC_YACC_COMMENT }
+  | "#line " int (" \"" [^ '"']* '"')? eol { (* ignore *) }
+
+(* This implementation does not support \0. *)
+
+and sc_after_identifier = parse
+  | '['     {
+      match !bracketed_id_str with
+      | Some s ->
+              rollback lexbuf;
+              save_pos lexbuf;
+              begin_ SC_RETURN_BRACKETED_ID;
+              ID(s)
+      | None ->
+              bracketed_id_context_state := !state;
+              begin_ SC_BRACKETED_ID
+  }
+  | ':'     {
+      rollback lexbuf;
+      match !bracketed_id_str with
+      | Some _ ->
+              save_pos lexbuf;
+              begin_ SC_RETURN_BRACKETED_ID
+      | None -> begin_ INITIAL;
+      ID_COLON
+  }
+  | char   {
+      rollback lexbuf;
+      match !bracketed_id_str with
+      | Some _ ->
+              save_pos lexbuf;
+              begin_ SC_RETURN_BRACKETED_ID
+      | None -> begin_ INITIAL;
+      ID
+  }
+  | eof     {
+      rollback lexbuf;
+      match !bracketed_id_str with
+      | Some _ ->
+              save_pos lexbuf;
+              begin_ SC_RETURN_BRACKETED_ID
+      | None -> begin_ INITIAL;
+      ID
+  }
+  | _       { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
+
+and sc_bracketed_id = parse
+  | id      {
+      match !bracketed_id_str with
+      | Some _ ->
+              complain (Printf.sprintf "unexpected identifier in bracketed name: %s" lexeme lexbuf) lexbuf;
+              GRAM_error
+      | None ->
+              bracketed_id_str := lexeme lexbuf
+  }
+  | ']'     {
+      begin_ !bracketed_id_context_state;
+      match !bracketed_id_str with
+      | Some s ->
+              if INITIAL = !bracketed_id_context_state then
+                  bracketed_id_str := None;
+                  BRACKETED_ID(s)
+      | None ->
+              complain "an identifier expected" lexbuf;
+              GRAM_error
+  }
+  | [^ ']' '.' 'A'-'Z' 'a'-'z' '0'-'9' '_' '/' ' ' '\t' '\r' '\n' '\011' '\012']+ | char    {
+      complain "invalid characters in bracketed name" lexbuf;
+      GRAM_error
+  }
+  | eof     {
+      begin_ !bracketed_id_context_state;
+      let token = match !bracketed_id_str with
+      | Some s ->
+              if INITIAL = !bracketed_id_context_state then
+                  bracketed_id_str := None;
+                  BRACKETED_ID(s)
+      | None ->
+              BRACKETED_ID("?") in
+      unexpected_eof "]" Some(token) lexbuf
+  }
+  | _       { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
+
+and sc_return_bracketed_id = parse
+  | char    {
+      rollback lexbuf;
+      let id = !bracketed_id_str in
+      bracketed_id_str := None;
+      begin_ INITIAL;
+      BRACKETED_ID(id)
+  }
+  | _       { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
+
+and sc_yacc_comment = parse
+  | "*/"            { begin_ !context_state }
+  | [^ '\n' '\r']   { (* continue *) }
+  | eof             { unexpected_eof "*/" None lexbuf; begin_ !context_state }
+
+and sc_comment = parse
+  | '*' splice '/'  { string_grow (lexeme lexbuf); begin_ !context_state }
+  | eof             { unexpected_eof "*/" None lexbuf }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+
+and sc_line_comment = parse
+  | eol             { string_grow (lexeme lexbuf); begin_ !context_state }
+  | splice          { string_grow (lexeme lexbuf) }
+  | eof             { begin_ !context_state }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+
+and sc_escaped_string = parse
+  | '"'    {
+      string_1grow '"';
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      complain "POSIX Yacc does not support string literals" lexbuf;
+      STRING(last_string)
+  }
+  | eof     {
+      string_1grow '"';
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      unexpected_eof "\"" (Some(STRING(last_string))) lexbuf
+  }
+  | '\n'    { unexpected_newline (get_range lexbuf) '"' }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scescapedcharacter_scescapedstring_scescapedtstring lexbuf }
+
+and sc_escaped_tstring = parse
+  | "\")"    {
+      string_1grow '"';
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      complain "POSIX Yacc does not support string literals" lexbuf;
+      TSTRING(last_string)
+  }
+  | eof     {
+      string_1grow '"';
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      unexpected_eof "\")" (Some(TSTRING(last_string))) lexbuf
+  }
+  | '\n'            { unexpected_newline (get_range lexbuf) "\")" }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scescapedcharacter_scescapedstring_scescapedtstring lexbuf }
+
+and sc_escaped_character = parse
+  | "'"    {
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      if (String.length last_string) != 1 then (
+          complain "extra characters in character literal" lexbuf;
+          GRAM_error
+      ) else
+          CHAR_LITERAL(last_string)
+  }
+  | eol     { unexpected_newline (get_range lexbuf) "'" }
+  | eof     {
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      let token =
+      if (String.length last_string) != 1 then (
+          complain "extra characters in character literal" lexbuf;
+          GRAM_error
+      ) else
+          CHAR_LITERAL(last_string) in
+      unexpected_eof "'" Some(token) lexbuf
+  }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scescapedcharacter_scescapedstring_scescapedtstring lexbuf }
+
+and sc_tag = parse
+  | '>'     {
+      decr nesting;
+      if !nesting < 0 then
+          let last_string = string_finish () in
+          begin_ INITIAL;
+          TAG(last_string)
+      else
+          string_grow (lexeme lexbuf)
+  }
+
+  | ([^ '<' '>'] | "->")+   { string_grow (lexeme lexbuf) }
+  | '<'+                    { string_grow (lexeme lexbuf); nesting := nesting + (String.length (lexeme lexbuf)) }
+
+  | eof                     {
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      unexpected_eof ">" Some(TAG(last_string)) lexbuf
+  }
+
+(* SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_TSTRING *)
+and common_scescapedcharacter_scescapedstring_scescapedtstring = parse
+  | '\\' (['0'-'7'] ['0'-'7']? ['0'-'7']? as octal) {
+      string_grow_escape (int_of_string ("0o" ^ octal))
+  }
+  | "\\x" (['0'-'9' 'a'-'f' 'A'-'F']+ as hex) {
+      string_grow_escape (int_of_string ("0x" ^ hex))
+  }
+  | "\\a"   { string_grow_escape '\007' }
+  | "\\b"   { string_grow_escape '\b' }
+  | "\\f"   { string_grow_escape '\012' }
+  | "\\n"   { string_grow_escape '\n' }
+  | "\\r"   { string_grow_escape '\r' }
+  | "\\t"   { string_grow_escape '\t' }
+  | "\\v"   { string_grow_escape '\011' }
+  | '\\' ['"' '\'' '?' '\\'] as ch { string_grow_escape ch.[1] }
+  (*
+  TODO: support "u0000" and "U00000000"
+  | '\\' ('u' | 'U') ['0'-'9' 'a'-'f' 'A'-'F']{4} ['0'-'9' 'a'-'f' 'A'-'F']{4} as ucn {
+      string_grow_escape (convert_ucn_to_byte ucn)
+  }
+  *)
+  | '\\' (char | eol) {
+      complain (Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf)) lexbuf;
+      string_1grow '?'
+  }
+  | '\\' {
+      let c = match !state with
+      | SC_ESCAPED_CHARACTER -> "?'"
+      | SC_ESCAPED_STRING -> "?\""
+      | _ -> "?\")" in
+      unexpected_eof c None lexbuf
+  }
+(* SC_CHARACTER,SC_STRING *)
+and common_sccharacter_scstringn = parse
+  | (splice | '\\' splice [^ '\n' '[' ']']) { string_grow (lexeme lexbuf) }
+
+and sc_character = parse
+  | '\''            { string_grow (lexeme lexbuf); begin_ !context_state }
+  | eol             { unexpected_newline (get_range lexbuf) '\'' }
+  | eof             { unexpected_eof "'" None lexbuf }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scharacter_scstring lexbuf }
+
+and sc_string = parse
+  | '"'             { string_grow (lexeme lexbuf); begin_ !context_state }
+  | eol             { unexpected_newline (get_range lexbuf) '"' }
+  | eof             { unexpected_eof "\"" None lexbuf }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scharacter_scstring lexbuf }
+
+(* SC_BRACED_CODE,SC_PROLOGUE,SC_EPILOGUE,SC_PREDICATE *)
+and common_scbracedcode_scprologue_scepilogue_scpredicate = parse
+  | '\''    {
+      string_grow (lexeme lexbuf)
+      context_state := !state;
+      begin_ SC_CHARACTER
+  }
+  | '"'     {
+      string_grow (lexeme lexbuf)
+      context_state := !state;
+      begin_ SC_STRING
+  }
+  | '/' splice '*'  {
+      string_grow (lexeme lexbuf)
+      context_state := !state;
+      begin_ SC_COMMENT
+  }
+  | '/' splice '/'  {
+      string_grow (lexeme lexbuf)
+      context_state := !state;
+      begin_ SC_LINE_COMMENT
+  }
+
+and sc_braced_code = parse
+  | '}' {
+      string_1grow '}';
+      decr nesting;
+      if !nesting < 0 then
+          let last_string = string_finish () in
+          begin_ INITIAL;
+          BRACED_CODE(last_string)
+  }
+  | (mbchar | char)         { string_grow (lexeme lexbuf) }
+  | ('{' | '<' splice '%')  { string_grow (lexeme lexbuf); incr nesting }
+  | '%' splice '>'          { string_grow (lexeme lexbuf); decr nesting }
+  | '<' splice '<'          { string_grow (lexeme lexbuf) }
+  | eof                     {
+      let last_string = string_finish () in
+      unexpected_eof "}" Some(BRACED_CODE(last_string)) lexbuf
+  }
+  | _   { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
+
+and sc_predicate = parse
+  | '}' {
+      decr nesting;
+      if !nesting < 0 then
+          let last_string = string_finish () in
+          begin_ INITIAL;
+          BRACED_PREDICATE(last_string)
+      else
+          string_1grow '}'
+  }
+  | (mbchar | char)         { string_grow (lexeme lexbuf) }
+  | ('{' | '<' splice '%')  { string_grow (lexeme lexbuf); incr nesting }
+  | '%' splice '>'          { string_grow (lexeme lexbuf); decr nesting }
+  | '<' splice '<'          { string_grow (lexeme lexbuf) }
+  | eof                     {
+      let last_string = string_finish () in
+      unexpected_eof "}" Some(BRACED_PREDICATE(last_string)) lexbuf
+  }
+  | _ { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
+
+and sc_prologue = parse
+  | "%}" {
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      PROLOGUE(last_string)
+  }
+  | eof {
+      let last_string = string_finish () in
+      unexpected_eof "%}" Some(PROLOGUE(last_string)) lexbuf
+  }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
+
+and sc_epilogue = parse
+  | eof {
+      let last_string = string_finish () in
+      begin_ INITIAL;
+      EPILOGUE(last_string)
+  }
+  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | _               { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
 
 {
-let read_token stack lexbuf =
-    match Stack.top stack with
-    | Prologue -> prologue stack lexbuf
-    | BisonDecls -> bison_decls stack lexbuf
-    | GrammarRules -> grammar_rules stack lexbuf
-    | Epilogue -> epilogue stack lexbuf
-    | Code -> code stack lexbuf
+let read_token lexbuf =
+    match !state with
+    | INITIAL -> initial lexbuf
+    | SC_YACC_COMMENT -> sc_yacc_comment lexbuf
+    | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+    | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+    | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+    | SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf
+    | SC_TAG -> sc_tag lexbuf
+    | SC_PROLOGUE -> sc_prologue lexbuf
+    | SC_BRACED_CODE -> sc_bracked_code lexbuf
+    | SC_EPILOGUE -> sc_epilogue lexbuf
+    | SC_PREDICATE -> sc_predicate lexbuf
+    | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+    | SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf
+    | SC_COMMENT -> sc_comment lexbuf
+    | SC_LINE_COMMENT -> sc_line_comment lexbuf
+    | SC_CHARACTER -> sc_character lexbuf
+    | SC_STRING -> sc_string lexbuf
+    | RETURN_EOF -> return_eof ()
 }
