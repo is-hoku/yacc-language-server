@@ -104,7 +104,7 @@ let unexpected_newline c lexbuf =
     newline lexbuf
 
 let deprecated_directive d =
-    complain (Printf.sprintf "deprecated directive: %s, use %s" d) lexbuf;
+    complain (Printf.sprintf "deprecated directive: %s" d) lexbuf;
 }
 
 let letter = ['.' 'a'-'z' 'A'-'Z' '_']
@@ -134,7 +134,7 @@ let eqopt = (sp '=')?
 rule initial = parse
   | "%binary"                               { PERCENT_NONASSOC }
   | "%code"                                 { PERCENT_CODE }
-  | "%debug"                                { RETURN_PERCENT_FLAG ("parse.trace") }
+  | "%debug"                                { PERCENT_FLAG ("parse.trace") }
   | "%default-prec"                         { PERCENT_DEFAULT_PREC }
   | "%define"                               { PERCENT_DEFINE }
   | "%defines"                              { PERCENT_HEADER } (* Deprecated in 3.8. *)
@@ -149,7 +149,7 @@ rule initial = parse
   | "%initial-action"                       { PERCENT_INITIAL_ACTION }
   | "%language"                             { PERCENT_LANGUAGE }
   | "%left"                                 { PERCENT_LEFT }
-  | "%lex-param"                            { PERCENT_PARAM ("lex") }
+  | "%lex-param"                            { PERCENT_PARAM (PARAM_LEX) }
   | "%locations"                            { PERCENT_FLAG ("locations") }
   | "%merge"                                { PERCENT_MERGE }
   | "%no-default-prec"                      { PERCENT_NO_DEFAULT_PREC }
@@ -158,8 +158,8 @@ rule initial = parse
   | "%nondeterministic-parser"              { PERCENT_NONDETERMINISTIC_PARSER }
   | "%nterm"                                { PERCENT_NTERM }
   | "%output"                               { PERCENT_OUTPUT }
-  | "%param"                                { PERCENT_PARAM ("both") }
-  | "%parse-param"                          { PERCENT_PARAM ("parse") }
+  | "%param"                                { PERCENT_PARAM (PARAM_BOTH) }
+  | "%parse-param"                          { PERCENT_PARAM (PARAM_PARSE) }
   | "%prec"                                 { PERCENT_PREC }
   | "%precedence"                           { PERCENT_PRECEDENCE }
   | "%printer"                              { PERCENT_PRINTER }
@@ -181,7 +181,7 @@ rule initial = parse
 
   (* Deprecated since Bison 3.0 (2013-07-25), but the warning is
      issued only since Bison 3.3. *)
-  | "%error-verbose"                        { PERCENT_ERROR_VERBOSE (lexeme lexbuf) }
+  | "%error-verbose"                        { PERCENT_ERROR_VERBOSE }
 
   (* Deprecated since Bison 2.6 (2012-07-19), but the warning is
      issued only since Bison 3.3. *)
