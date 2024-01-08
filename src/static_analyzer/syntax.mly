@@ -1,7 +1,62 @@
 %{
 open Types
-let current_param = ref PARAM_NONE
+
+let dummy_string_ = ("", (Lexing.dummy_pos, Lexing.dummy_pos))
 let current_class = ref UNKNOWN_SYM
+let current_prec = ref UNKNOWN_PREC
+
+let tagging tag syms =
+    List.map (fun s ->
+        match s with
+        | PercentNterm p -> PercentNterm{ p with tag = Some tag }
+        | PercentToken p -> PercentToken{ p with tag = Some tag }
+        | _ -> raise (SyntaxError "invalid directive")
+    ) syms
+
+let rec prologuedeclarations = function
+    | [] -> None
+    | x :: xs ->
+        match x with
+        | Prologue p -> Some (Prologue{ p with next = (prologuedeclarations xs) })
+        | PercentFlag p -> Some (PercentFlag{ p with next = (prologuedeclarations xs) })
+        | PercentDefine p -> Some (PercentDefine{ p with next = (prologuedeclarations xs) })
+        | PercentHeader p -> Some (PercentHeader{ p with next = (prologuedeclarations xs) })
+        | PercentErrorVerbose p -> Some (PercentErrorVerbose{ p with next = (prologuedeclarations xs) })
+        | PercentExpect p -> Some (PercentExpect{ p with next = (prologuedeclarations xs) })
+        | PercentExpectRR p -> Some (PercentExpectRR{ p with next = (prologuedeclarations xs) })
+        | PercentFilePrefix p -> Some (PercentFilePrefix{ p with next = (prologuedeclarations xs) })
+        | PercentGlrParser p -> Some (PercentGlrParser{ p with next = (prologuedeclarations xs) })
+        | PercentInitialAction p -> Some (PercentInitialAction { p with next = (prologuedeclarations xs) })
+        | PercentLanguage p -> Some (PercentLanguage{ p with next = (prologuedeclarations xs) })
+        | PercentNamePrefix p -> Some (PercentNamePrefix{ p with next = (prologuedeclarations xs) })
+        | PercentNoLines p -> Some (PercentNoLines{ p with next = (prologuedeclarations xs) })
+        | PercentNondeterministicParser p -> Some (PercentNondeterministicParser{ p with next = (prologuedeclarations xs) })
+        | PercentOutput p -> Some (PercentOutput{ p with next = (prologuedeclarations xs) })
+        | PercentParam p -> Some (PercentParam{ p with next = (prologuedeclarations xs) })
+        | PercentPureParser p -> Some (PercentPureParser{ p with next = (prologuedeclarations xs) })
+        | PercentRequire p -> Some (PercentRequire{ p with next = (prologuedeclarations xs) })
+        | PercentSkeleton p -> Some (PercentSkeleton{ p with next = (prologuedeclarations xs) })
+        | PercentTokenTable p -> Some (PercentTokenTable{ p with next = (prologuedeclarations xs) })
+        | PercentVerbose p -> Some (PercentVerbose{ p with next = (prologuedeclarations xs) })
+        | PercentYacc p -> Some (PercentYacc{ p with next = (prologuedeclarations xs) })
+        | GrammarDirective p -> Some (GrammarDirective{ p with next = (prologuedeclarations xs) })
+        | _ -> raise (SyntaxError "invalid input")
+
+let rec grammarrules = function
+    | [] -> None
+    | x :: xs ->
+        match x with
+        | Rule p -> Some (Rule{ p with next = (grammarrules xs) })
+        | GrammarDecl p -> Some (GrammarDecl{ p with next = (grammarrules xs) })
+        | _ -> raise (SyntaxError "invalid input")
+
+let rec grammardirective = function
+    | [] -> None
+    | x :: xs -> Some (GrammarDirective{ directive = x; next = grammardirective xs })
+
+let rec grammardecl = function
+    | [] -> None
+    | x :: xs -> Some (GrammarDecl{ directive = x; next = grammardecl xs })
 %}
 
 %token <string>
@@ -62,7 +117,7 @@ EPILOGUE          "epilogue"
 ID                "identifier"
 ID_COLON          "identifier:"
 PROLOGUE          "%{...%}"
-TAG               "<tag>"
+TAG         "<tag>"
 
 %token
 COLON             ":"
@@ -70,12 +125,12 @@ EQUAL             "="
 PERCENT_PERCENT   "%%"
 PIPE              "|"
 SEMICOLON         ";"
-TAG_ANY           "<*>"
-TAG_NONE          "<>"
+TAG_ANY     "<*>"
+TAG_NONE    "<>"
 
-%token <char> CHAR_LITERAL "character literal"
-%type <string> tag_opt variable
-%token <int> INT_LITERAL "integer literal"
+%token <string * Types.t> CHAR_LITERAL "character literal"
+%type <Types.tag option> tag_opt
+%token <int * Types.t> INT_LITERAL "integer literal"
 (*%type <symbol> id id_colon string_as_id symbol token_decl token_decl_for_prec*)
 (*%type <assoc> precedence_declarator*)
 (*%type <named_ref> named_ref_opt*)
@@ -88,171 +143,229 @@ TAG_NONE          "<>"
 (*%type <code_props_type> code_props_type;*)
 %token PERCENT_UNION "%union"
 (*%type <symbol_list> nterm_decls symbol_decls symbols_1 token_decls token_decls_for_prec token_decl_1 token_decl_for_prec_1;*)
-%type <string> string_opt
+%type <(string * Types.pos) option> string_opt
 (*%type <symbol_list> generic_symlist generic_symlist_item;*)
-%type <int> int_opt
+%type <(int * Types.pos)  option> int_opt
 (*%type <symbol> alias;*)
 %token PERCENT_EMPTY "%empty"
 (*%type <value_type> value;*)
 
-%type <unit> input
+%type <Types.t> input
 %start input
 
 %%
 
 input:
-| prologue_declarations "%%" grammar epilogue_opt {}
+| p=prologue_declarations; "%%" g=grammar; e=epilogue_opt {
+    let pd =
+        match (prologuedeclarations p) with
+        | None -> raise (SyntaxError "empty prologue/declarations")
+        | Some v -> v
+    in
+    let gr =
+        match (grammarrules g) with
+        | None -> raise (SyntaxError "empty prologue/declarations")
+        | Some v -> v
+    in
+    {
+        prologue_declarations = pd;
+        grammar_rules = gr;
+        epilogue = e;
+    }
+}
 ;
 
 (* Declarations: before the first %%. *)
 prologue_declarations:
-| {}
-| prologue_declarations prologue_declaration {}
+| { [] }
+| p1=prologue_declarations; p2=prologue_declaration {
+    p1 @ [ p2 ]
+}
 ;
 
 prologue_declaration:
-| grammar_declaration {}
-| "%{...%}" {}
-| "%<flag>" {}
-| "%define" variable value {}
-| "%header" string_opt {}
-| "%error-verbose" {}
-| "%expect" INT_LITERAL {}
-| "%expect-rr" INT_LITERAL {}
-| "%file-prefix" STRING {}
-| "%glr-parser" {}
-| "%initial-action" "{...}" {}
-| "%language" STRING {}
-| "%name-prefix" STRING {}
-| "%no-lines" {}
-| "%nondeterministic-parser" {}
-| "%output" STRING {}
-| midrule("%param" { current_param := $1; }) params { current_param := PARAM_NONE }
-| "%pure-parser" {}
-| "%require" STRING {}
-| "%skeleton" STRING {}
-| "%token-table" {}
-| "%verbose" {}
-| "%yacc" {}
-| error ";" {}
+| grammar_declaration {
+    match $1 with
+    | DirectiveList s -> (
+        match (grammardirective s) with
+        | None -> raise (SyntaxError "empty directives")
+        | Some v -> v
+    )
+    | _ -> $1
+}
+| "%{...%}" { Prologue{ pos = $loc; next = None } }
+| f="%<flag>" { PercentFlag{ flag = f; pos = $loc; next = None} }
+| p="%define"; var=variable; v=value { PercentDefine{ variable = var; value = v; pos = $loc(p); next = None } }
+| p="%header"; header=string_opt { PercentHeader{ header; pos = $loc(p); next = None } }
+| "%error-verbose" { PercentErrorVerbose{ pos = $loc; next = None} }
+| p="%expect"; i=INT_LITERAL { PercentExpect{ conflict = i; pos = $loc(p); next = None } }
+| p="%expect-rr"; i=INT_LITERAL { PercentExpectRR{ conflict = i; pos = $loc(p); next = None} }
+| p="%file-prefix"; prefix=STRING { PercentFilePrefix{ prefix; pos = $loc(p); next = None } }
+| "%glr-parser" { PercentGlrParser{ pos = $loc; next = None } }
+| p="%initial-action"; code="{...}" { PercentInitialAction{ code; pos = $loc(p); next = None } }
+| p="%language"; language=STRING { PercentLanguage{ language; pos = $loc(p); next = None } }
+| p="%name-prefix"; directive=STRING { PercentNamePrefix{ directive; pos = $loc(p); next = None } }
+| "%no-lines" { PercentNoLines{ pos = $loc; next = None } }
+| "%nondeterministic-parser" { PercentNondeterministicParser{ pos = $loc; next = None } }
+| p="%output"; file=STRING { PercentOutput{ file; pos = $loc(p); next = None } }
+| param_type="%param"; params=params { PercentParam{ param_type; params; pos = $loc(param_type); next = None } }
+| "%pure-parser" { PercentPureParser{ directive = $1; pos = $loc; next = None } }
+| p="%require"; version=STRING { PercentRequire{ version; pos = $loc(p); next = None } }
+| p="%skeleton"; file=STRING { PercentSkeleton{ file; pos = $loc(p); next = None } }
+| "%token-table" { PercentTokenTable{ pos = $loc; next = None } }
+| "%verbose" { PercentVerbose{ pos = $loc; next = None } }
+| "%yacc" { PercentYacc{ pos = $loc; next = None } }
+| msg=error; ";" { Error{ msg; pos = $loc; next = None} }
 ;
 
 params:
-| params "{...}" {}
-| "{...}" {}
+| params "{...}" { $1 @ $2 }
+| "{...}" { [ $1 ] }
 ;
 
 (* grammar_declaration. *)
 grammar_declaration:
-| symbol_declaration {}
-| "%start" symbols_1 {}
-| code_props_type "{...}" generic_symlist {}
-| "%default-prec" {}
-| "%no-default-prec" {}
-| "%code" "{...}" {}
-| "%code" ID "{...}" {}
-| "%union" union_name "{...}" {}
+| symbol_declaration { DirectiveList ($1) }
+| p="%start"; symbols=symbols_1 { PercentStart{ symbols; pos = $loc(p) } }
+| p=code_props_type; c="{...}"; symlist=generic_symlist {
+    match p with
+    | PercentDestructor v -> PercentDestructor{ v with code = c; symlist } 
+    | PercentPrinter v -> PercentPrinter{ v with code = c; symlist }
+}
+| "%default-prec" { PercentDefaultPrec($loc) }
+| "%no-default-prec" { PercentNoDefaultPrec($loc) }
+| p="%code"; code="{...}" { PercentCode{ id = None; code; pos = $loc(p) } }
+| p="%code"; id=ID; code="{...}" { PercentCode{ id = Some id; code; pos = $loc(p) } }
+| p="%union"; name=union_name; code="{...}" { PercentUnion{ name; code; pos = $loc(p) } }
 ;
 
 code_props_type:
-| "%destructor" {}
-| "%printer" {}
+| "%destructor" { PercentDestructor{ code = dummy_string_; symlist = []; pos = $loc } }
+| "%printer" { PercentPrinter{ code = dummy_string_; symlist = []; pos = $loc } }
 ;
 
 (* %union. *)
 union_name:
-| {}
-| ID {}
+| { None }
+| id=ID { Some (id, $loc) }
 ;
 
 symbol_declaration:
-| "%nterm" midrule({ current_class := NTERM_SYM }) syms=nterm_decls {}
-| "%token" midrule({ current_class := TOKEN_SYM }) syms=token_decls {}
-| "%type" midrule({ current_class := PCT_TYP_SYM }) syms=symbol_decls {}
-| precedence_declarator syms=token_decls_for_prec {}
+| "%nterm" midrule({ current_class := NTERM_SYM }) syms=nterm_decls { syms }
+| "%token" midrule({ current_class := TOKEN_SYM }) syms=token_decls { syms }
+| "%type" midrule({ current_class := PCT_TYP_SYM }) syms=symbol_decls { syms }
+| precedence_declarator syms=token_decls_for_prec { syms }
 ;
 
 precedence_declarator:
-| "%left" {}
-| "%right" {}
-| "%nonassoc" {}
-| "%precedence" {}
+| "%left"       { current_prec := LEFT_PREC }
+| "%right"      { current_prec := RIGHT_PREC }
+| "%nonassoc"   { current_prec := NONASSOC_PREC }
+| "%precedence" { current_prec := PRECEDENCE_PREC }
 ;
 
 string_opt:
-| {}
-| STRING {}
+| { None }
+| STRING { Some ($1, $loc) }
 ;
 
 tag_opt:
-| {}
-| TAG {}
+| { None }
+| TAG { Some (TagName ($1, $loc)) }
 ;
 
 generic_symlist:
-| generic_symlist_item {}
-| generic_symlist generic_symlist_item {}
+| generic_symlist_item { [ $1 ] }
+| generic_symlist generic_symlist_item { $1 @ $2 }
 ;
 
 generic_symlist_item:
-| symbol {}
-| tag {}
+| symbol { $1 }
+| tag { $1 }
 ;
 
 tag:
-| TAG {}
-| "<*>" {}
-| "<>" {}
+| TAG { TagName ($1, $loc) }
+| "<*>" { TagAny }
+| "<>" { TagNone }
 
 (* nterm_decls (%nterm). *)
 nterm_decls:
-| token_decls {}
+| token_decls { $1 }
 ;
 
 (* token_decls (%token, and %nterm). *)
 token_decls:
-| syms=token_decl_1 {}
-| TAG syms=token_decl_1 {}
-| token_decls TAG syms=token_decl_1 {}
+| syms=token_decl_1 { syms }
+| t=TAG; syms=token_decl_1 { tagging (TagName (t, $loc(t))) syms }
+| tds1=token_decls; t=TAG; tds2=token_decl_1 {
+    tds1 @ (tagging (TagName (t, $loc(t))) tds2)
+}
 ;
 
 (* One or more symbol declarations for %token or %nterm. *)
 token_decl_1:
-| token_decl {}
-| token_decl_1 token_decl {}
+| token_decl { [ $1 ] }
+| td=token_decl_1; directive=token_decl {
+    td @ [ directive ]
+}
 
 (* One symbol declaration for %token or %nterm. *)
 token_decl:
-| id num=int_opt alias {}
+| id=id; number=int_opt; alias=alias {
+    match !current_class with
+    | NTERM_SYM -> PercentNterm{ tag = None; id; pos = $loc }
+    | TOKEN_SYM -> PercentToken{ tag = None; id; number; alias; pos = $loc }
+    | _ -> raise (SyntaxError "invalid type")
+}
 ;
 
 int_opt:
-| {}
-| INT_LITERAL {}
+| { None }
+| INT_LITERAL { Some ($1, $loc) }
 ;
 
 alias:
-| {}
-| string_as_id {}
-| TSTRING {}
+| { None }
+| string_as_id { Some ($1, $loc) }
+| TSTRING { Some ($1, $loc) }
 ;
 
 (* token_decls_for_prec (%left, etc.). *)
 token_decls_for_prec:
-| syms=token_decl_for_prec_1 {}
-| TAG syms=token_decl_for_prec_1 {}
-| token_decls_for_prec TAG syms=token_decl_for_prec_1 {}
+| syms=token_decl_for_prec_1 { syms }
+| t=TAG; syms=token_decl_for_prec_1 { tagging (TagName (t, $loc(t))) syms }
+| tds1=token_decls_for_prec; t=TAG; tds2=token_decl_for_prec_1 {
+    tds1 @ (tagging (TagName (t, $loc(t))) tds2)
+}
 ;
 
 (* One or more token declarations for precedence declaration. *)
 token_decl_for_prec_1:
-| token_decl_for_prec {}
-| token_decl_for_prec_1 token_decl_for_prec {}
+| token_decl_for_prec { [ $1 ] }
+| td=token_decl_for_prec_1; directive=token_decl_for_prec {
+    td @ [ directive ]
+}
 
 (* One token declaration for precedence declaration. *)
 token_decl_for_prec:
-| id num=int_opt {}
-| string_as_id {}
+| id=id; number=int_opt {
+    match !current_prec with
+    | LEFT_PREC -> PercentLeft{ tag = None; id; number; pos = $loc }
+    | RIGHT_PREC -> PercentRight{ tag = None; id; number; pos = $loc }
+    | NONASSOC_PREC -> PercentNonassoc{ tag = None; id; number; pos = $loc }
+    | PRECEDENCE_PREC -> PercentPrecedence{ tag = None; id; number; pos = $loc }
+    | UNKNOWN_PREC -> raise (SyntaxError "prec directives not found")
+}
+| string_as_id {
+    let id = ($1, $loc) in
+    match !current_prec with
+    | LEFT_PREC -> PercentLeft{ tag = None; id; number = None; pos = $loc }
+    | RIGHT_PREC -> PercentRight{ tag = None; id; number = None; pos = $loc }
+    | NONASSOC_PREC -> PercentNonassoc{ tag = None; id; number = None; pos = $loc }
+    | PRECEDENCE_PREC -> PercentPrecedence{ tag = None; id; number = None; pos = $loc }
+    | UNKNOWN_PREC -> raise (SyntaxError "prec directives not found")
+}
 ;
 
 
@@ -260,98 +373,113 @@ token_decl_for_prec:
 
 (* A non empty list of typed symbols (for %type). *)
 symbol_decls:
-| syms=symbols_1 {}
-| TAG syms=symbols_1 {}
-| symbol_decls TAG syms=symbols_1 {}
+| syms=symbols_1 { syms }
+| sds1=symbol_decls; t=TAG; sds2=symbols_1 {
+    sds1 @ (tagging (TagName (t, $loc(t))) sds2)
+}
 ;
 
 (* One or more symbols. *)
 symbols_1:
-| symbol {}
-| symbols_1 symbol {}
+| symbol { [ $1 ] }
+| ss=symbols_1; s=symbol { ss @ [ s ] }
 ;
 
 
 (* The grammar section: between the two %%. *)
 
 grammar:
-| rules_or_grammar_declaration {}
-| grammar rules_or_grammar_declaration {}
+| rules_or_grammar_declaration { [ $1 ] }
+| g=grammar; rg=rules_or_grammar_declaration {
+    g @ [ rg ]
+}
 ;
 
 (* As a Bison extension, one can use the grammar declarations in the body of the grammar. *)
 rules_or_grammar_declaration:
-| rules {}
-| grammar_declaration ";" {}
-| error ";" {}
+| rules { $1 }
+| grammar_declaration ";" {
+    match $1 with
+    | DirectiveList s -> (
+        match (grammardecl s) with
+        | None -> raise (SyntaxError "empty directives")
+        | Some v -> v
+    )
+    | _ -> $1
+}
+| error ";" { raise (SyntaxError error)}
 ;
 
 rules:
-| id_colon named_ref_opt midrule({(* current_lhs($1, @1, $2)*) }) ":" rhses_1 {}
+| id=id_colon; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
+    Rule{ id; named_ref; rhs; pos=$loc }
+}
 ;
 
 rhses_1:
-| rhs {}
-| rhses_1 "|" rhs {}
-| rhses_1 ";" {}
+| rhs { $1 }
+| r1=rhses_1; "|"; r2=rhs { r1 @ r2 }
+| rhses_1 ";" { $1 }
 ;
 
 rhs:
-| {}
-| rhs symbol named_ref_opt {}
-| rhs tag_opt action="{...}" name=named_ref_opt {}
-| rhs "%?{...}" {}
-| rhs "%empty" {}
-| rhs "%prec" symbol {}
-| rhs "%dprec" INT_LITERAL {}
-| rhs "%merge" TAG {}
-| rhs "%expect" INT_LITERAL {}
-| rhs "%expect-rr" INT_LITERAL {}
+| { [] }
+| rhs; symbol=symbol; named_ref=named_ref_opt { $1 @ [ RhsSym{ symbol; named_ref } ] }
+| rhs; tag=tag_opt; code="{...}"; named_ref=named_ref_opt {
+    $1 @ [ RhsMidrule{tag; code; named_ref} ]
+}
+| rhs; p="%?{...}" { $1 @ [ RhsPredicate p ] }
+| rhs; p="%empty" { $1 @ [ RhsPercentEmpty ($loc(p)) ] }
+| rhs; "%prec"; s=symbol { $1 @ [ RhsPercentPrec s ] }
+| rhs; "%dprec"; i=INT_LITERAL { $1 @ [ RhsPercentDprec i ] }
+| rhs; "%merge"; t=TAG { $1 @ [ RhsPercentMerge t ] }
+| rhs; "%expect"; i=INT_LITERAL { $1 @ [ RhsPercentExpect i ] }
+| rhs; "%expect-rr"; i=INT_LITERAL { $1 @ [ RhsPercentExpectRR i ] }
 ;
 
 named_ref_opt:
-| {}
-| BRACKETED_ID {}
+| { None }
+| BRACKETED_ID { Some ($1, $loc) }
 ;
 
 
 (* variable and value. *)
 
 variable:
-| ID {}
+| ID { ($1, $loc) }
 ;
 
 (* Some content or empty by default. *)
 value:
-| {}
-| ID {}
-| STRING {}
-| "{...}" {}
+| { None }
+| ID { Some (ValID($1, $loc)) }
+| STRING { Some (ValString($1, $loc)) }
+| "{...}" { Some (ValCode($1, $loc)) }
 ;
 
 
 (* Identifiers. *)
 
 id:
-| ID {}
-| CHAR_LITERAL {}
+| ID { ($1, $loc) }
+| CHAR_LITERAL { ($1, $loc) }
 ;
 
 id_colon:
-| ID_COLON {}
+| ID_COLON { ($1, $loc) }
 ;
 
 symbol:
-| id {}
-| string_as_id {}
+| id { SymID $1 }
+| string_as_id { SymString $1 }
 ;
 
 (* A string used as an ID. *)
 string_as_id:
-| STRING {}
+| STRING { ($1, $loc) }
 ;
 
 epilogue_opt:
-| {}
-| "%%" EPILOGUE {}
+| { None }
+| "%%" EPILOGUE { Some ($1, $loc) }
 ;

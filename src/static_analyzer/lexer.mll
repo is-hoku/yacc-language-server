@@ -1,6 +1,7 @@
 {
 open Lexing
 open Syntax
+open Types
 open Language_server.Import
 
 exception Lex_error of position * string

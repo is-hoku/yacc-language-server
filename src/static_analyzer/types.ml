@@ -1,169 +1,174 @@
-open Language_server.Import
-
 type param_type = PARAM_NONE | PARAM_LEX | PARAM_PARSE | PARAM_BOTH
 type symbol_class = UNKNOWN_SYM | NTERM_SYM | TOKEN_SYM | PCT_TYP_SYM
 
-type input = {
-  prologu_declarations : prologue_declaration;
-  grammar : grammar;
+type prec_class =
+  | UNKNOWN_PREC
+  | LEFT_PREC
+  | RIGHT_PREC
+  | NONASSOC_PREC
+  | PRECEDENCE_PREC
+
+type pos = Lexing.position * Lexing.position
+
+exception SyntaxError of string
+
+type t = {
+  prologue_declarations : prologue_declaration;
+  grammar_rules : grammar;
   epilogue : epilogue option;
 }
 
 (* Declarations. *)
 and prologue_declaration =
-  | Prologue of { range : Range.t; next : prologue_declaration option option }
+  | Prologue of { pos : pos; next : prologue_declaration option }
   | PercentFlag of {
       flag : string;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentDefine of {
       variable : string_;
       value : value option;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentHeader of {
       header : string_ option;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
-  | PercentErrorVerbose of {
-      range : Range.t;
-      next : prologue_declaration option;
-    }
+  | PercentErrorVerbose of { pos : pos; next : prologue_declaration option }
   | PercentExpect of {
       conflict : int_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentExpectRR of {
       conflict : int_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentFilePrefix of {
       prefix : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
-  | PercentGlrParser of { range : Range.t; next : prologue_declaration option }
+  | PercentGlrParser of { pos : pos; next : prologue_declaration option }
   | PercentInitialAction of {
       code : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentLanguage of {
       language : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentNamePrefix of {
       directive : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
-  | PercentNoLines of { range : Range.t; next : prologue_declaration option }
+  | PercentNoLines of { pos : pos; next : prologue_declaration option }
   | PercentNondeterministicParser of {
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentOutput of {
       file : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentParam of {
+      param_type : param_type;
       params : string_ list;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentPureParser of {
-      directive : string_;
-      range : Range.t;
+      directive : string;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentRequire of {
       version : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
   | PercentSkeleton of {
       file : string_;
-      range : Range.t;
+      pos : pos;
       next : prologue_declaration option;
     }
-  | PercentTokenTable of { range : Range.t; next : prologue_declaration option }
-  | PercentVerbose of { range : Range.t; next : prologue_declaration option }
-  | PercentYacc of { range : Range.t; next : prologue_declaration option }
+  | PercentTokenTable of { pos : pos; next : prologue_declaration option }
+  | PercentVerbose of { pos : pos; next : prologue_declaration option }
+  | PercentYacc of { pos : pos; next : prologue_declaration option }
   | GrammarDirective of {
       directive : grammar_declaration;
       next : prologue_declaration option;
     }
+  | DirectiveList of grammar_declaration list
 
 (* grammar declaration *)
 and grammar_declaration =
-  | PercentStart of { symbol : symbol; range : Range.t }
-  | PercentDefaultPrec of Range.t
-  | PercentCode of { id : string_ option; code : string_; range : Range.t }
-  | PercentUnion of { name : string_; code : string_; range : Range.t }
+  | PercentStart of { symbols : symbol list; pos : pos }
+  | PercentDefaultPrec of pos
+  | PercentNoDefaultPrec of pos
+  | PercentCode of { id : string_ option; code : string_; pos : pos }
+  | PercentUnion of { name : string_ option; code : string_; pos : pos }
   (* code props type *)
   | PercentDestructor of {
       code : string_;
       symlist : symbol_tag list;
-      range : Range.t;
+      pos : pos;
     }
-  | PercentPrinter of {
-      code : string_;
-      symlist : symbol_tag list;
-      range : Range.t;
-    }
+  | PercentPrinter of { code : string_; symlist : symbol_tag list; pos : pos }
   (* symbol declaration *)
-  | PercentNterm of { tag : tag option; id : string_; range : Range.t }
+  | PercentNterm of { tag : tag option; id : string_; pos : pos }
   | PercentToken of {
       tag : tag option;
       id : string_;
       number : int_ option;
       alias : string_ option;
-      range : Range.t;
+      pos : pos;
     }
-  | PercentType of { tag : tag option; id : string_; range : Range.t }
+  | PercentType of { tag : tag option; id : string_; pos : pos }
   (* precedence declarator *)
   | PercentLeft of {
       tag : tag option;
       id : string_;
       number : int_ option;
-      range : Range.t;
+      pos : pos;
     }
   | PercentRight of {
       tag : tag option;
       id : string_;
       number : int_ option;
-      range : Range.t;
+      pos : pos;
     }
   | PercentNonassoc of {
       tag : tag option;
       id : string_;
       number : int_ option;
-      range : Range.t;
+      pos : pos;
     }
   | PercentPrecedence of {
       tag : tag option;
       id : string_;
       number : int_ option;
-      range : Range.t;
+      pos : pos;
     }
 
-and string_ = string * Range.t
-and int_ = int * Range.t
+and string_ = string * pos
+and int_ = int * pos
 
 and value =
-  | ValID of (string * Range.t)
-  | ValString of (string * Range.t)
-  | ValCode of (string * Range.t)
+  | ValID of (string * pos)
+  | ValString of (string * pos)
+  | ValCode of (string * pos)
 
-and symbol = SymID of (string * Range.t) | SymString of (string * Range.t)
-and tag = TagAny | TagNone | TagName of (string * Range.t)
+and symbol = SymID of (string * pos) | SymString of (string * pos)
+and tag = TagAny | TagNone | TagName of (string * pos)
 and symbol_tag = Sym of symbol | Tag of tag
 
 (* grammar *)
@@ -172,11 +177,11 @@ and grammar =
       id : string_;
       named_ref : string_ option;
       rhs : rhs list;
-      range : Range.t;
+      pos : pos;
       next : grammar option;
     }
   | GrammarDecl of { directive : grammar_declaration; next : grammar option }
-  | Error of { msg : string; range : Range.t; next : grammar option }
+  | DeclList of grammar_declaration list
 
 and rhs =
   | RhsSym of { symbol : symbol; named_ref : string_ option }
@@ -186,7 +191,7 @@ and rhs =
       named_ref : string_ option;
     }
   | RhsPredicate of string_
-  | RhsPercentEmpty of Range.t
+  | RhsPercentEmpty of pos
   | RhsPercentPrec of symbol
   | RhsPercentDprec of int_
   | RhsPercentMerge of tag
