@@ -108,6 +108,7 @@ and prologue_declaration =
       next : prologue_declaration option;
     }
   | DirectiveList of grammar_declaration list
+  | Error of { msg : string; pos : pos; next : prologue_declaration option }
 
 (* grammar declaration *)
 and grammar_declaration =
@@ -132,7 +133,7 @@ and grammar_declaration =
       alias : string_ option;
       pos : pos;
     }
-  | PercentType of { tag : tag option; id : string_; pos : pos }
+  | PercentType of { tag : tag option; id : symbol; pos : pos }
   (* precedence declarator *)
   | PercentLeft of {
       tag : tag option;
@@ -158,6 +159,7 @@ and grammar_declaration =
       number : int_ option;
       pos : pos;
     }
+  | GrammarDeclarationList of grammar_declaration list
 
 and string_ = string * pos
 and int_ = int * pos

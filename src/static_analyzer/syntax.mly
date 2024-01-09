@@ -10,6 +10,7 @@ let tagging tag syms =
         match s with
         | PercentNterm p -> PercentNterm{ p with tag = Some tag }
         | PercentToken p -> PercentToken{ p with tag = Some tag }
+        | PercentType p -> PercentType{ p with tag = Some tag }
         | _ -> raise (SyntaxError "invalid directive")
     ) syms
 
@@ -90,6 +91,7 @@ PERCENT_FILE_PREFIX     "%file-prefix"
 PERCENT_FLAG            "%<flag>"
 PERCENT_NAME_PREFIX     "%name-prefix"
 PERCENT_PURE_PARSER     "%pure-parser"
+PERCENT_INVALID         "%(invalid)"
 
 %token
 PERCENT_EXPECT          "%expect"
@@ -117,7 +119,9 @@ EPILOGUE          "epilogue"
 ID                "identifier"
 ID_COLON          "identifier:"
 PROLOGUE          "%{...%}"
-TAG         "<tag>"
+TAG               "<tag>"
+PERCENT_FIXED_OUTPUT_FILES  "%fixed-output-files"
+GRAM_error        "(gram_error)"
 
 %token
 COLON             ":"
@@ -127,10 +131,11 @@ PIPE              "|"
 SEMICOLON         ";"
 TAG_ANY     "<*>"
 TAG_NONE    "<>"
+EOF         "eof"
 
-%token <string * Types.t> CHAR_LITERAL "character literal"
+%token <string> CHAR_LITERAL "character literal"
 %type <Types.tag option> tag_opt
-%token <int * Types.t> INT_LITERAL "integer literal"
+%token <int> INT_LITERAL "integer literal"
 (*%type <symbol> id id_colon string_as_id symbol token_decl token_decl_for_prec*)
 (*%type <assoc> precedence_declarator*)
 (*%type <named_ref> named_ref_opt*)
@@ -186,57 +191,60 @@ prologue_declarations:
 prologue_declaration:
 | grammar_declaration {
     match $1 with
-    | DirectiveList s -> (
+    | GrammarDeclarationList s -> (
         match (grammardirective s) with
         | None -> raise (SyntaxError "empty directives")
         | Some v -> v
     )
-    | _ -> $1
+    | _ -> GrammarDirective{ directive = $1; next = None }
 }
 | "%{...%}" { Prologue{ pos = $loc; next = None } }
-| f="%<flag>" { PercentFlag{ flag = f; pos = $loc; next = None} }
-| p="%define"; var=variable; v=value { PercentDefine{ variable = var; value = v; pos = $loc(p); next = None } }
-| p="%header"; header=string_opt { PercentHeader{ header; pos = $loc(p); next = None } }
+| "%<flag>" { PercentFlag{ flag = $1; pos = $loc; next = None} }
+| "%define"; var=variable; v=value { PercentDefine{ variable = var; value = v; pos = $loc($1); next = None } }
+| "%header"; header=string_opt { PercentHeader{ header; pos = $loc($1); next = None } }
 | "%error-verbose" { PercentErrorVerbose{ pos = $loc; next = None} }
-| p="%expect"; i=INT_LITERAL { PercentExpect{ conflict = i; pos = $loc(p); next = None } }
-| p="%expect-rr"; i=INT_LITERAL { PercentExpectRR{ conflict = i; pos = $loc(p); next = None} }
-| p="%file-prefix"; prefix=STRING { PercentFilePrefix{ prefix; pos = $loc(p); next = None } }
+| "%expect"; i=INT_LITERAL { PercentExpect{ conflict = (i, $loc(i)); pos = $loc($1); next = None } }
+| "%expect-rr"; i=INT_LITERAL { PercentExpectRR{ conflict = (i, $loc(i)); pos = $loc($1); next = None} }
+| "%file-prefix"; prefix=STRING { PercentFilePrefix{ prefix = (prefix, $loc(prefix)); pos = $loc($1); next = None } }
 | "%glr-parser" { PercentGlrParser{ pos = $loc; next = None } }
-| p="%initial-action"; code="{...}" { PercentInitialAction{ code; pos = $loc(p); next = None } }
-| p="%language"; language=STRING { PercentLanguage{ language; pos = $loc(p); next = None } }
-| p="%name-prefix"; directive=STRING { PercentNamePrefix{ directive; pos = $loc(p); next = None } }
+| "%initial-action"; code="{...}" { PercentInitialAction{ code = (code, $loc(code)); pos = $loc($1); next = None } }
+| "%language"; language=STRING { PercentLanguage{ language = (language, $loc(language)); pos = $loc($1); next = None } }
+| "%name-prefix"; directive=STRING { PercentNamePrefix{ directive = (directive, $loc(directive)); pos = $loc($1); next = None } }
 | "%no-lines" { PercentNoLines{ pos = $loc; next = None } }
 | "%nondeterministic-parser" { PercentNondeterministicParser{ pos = $loc; next = None } }
-| p="%output"; file=STRING { PercentOutput{ file; pos = $loc(p); next = None } }
+| "%output"; file=STRING { PercentOutput{ file = (file, $loc(file)); pos = $loc($1); next = None } }
+| "%fixed-output-files" { PercentOutput{ file = ($1, $loc); pos = $loc($1); next = None } }
 | param_type="%param"; params=params { PercentParam{ param_type; params; pos = $loc(param_type); next = None } }
 | "%pure-parser" { PercentPureParser{ directive = $1; pos = $loc; next = None } }
-| p="%require"; version=STRING { PercentRequire{ version; pos = $loc(p); next = None } }
-| p="%skeleton"; file=STRING { PercentSkeleton{ file; pos = $loc(p); next = None } }
+| "%require"; version=STRING { PercentRequire{ version = (version, $loc(version)); pos = $loc($1); next = None } }
+| "%skeleton"; file=STRING { PercentSkeleton{ file = (file, $loc(file)); pos = $loc($1); next = None } }
 | "%token-table" { PercentTokenTable{ pos = $loc; next = None } }
 | "%verbose" { PercentVerbose{ pos = $loc; next = None } }
 | "%yacc" { PercentYacc{ pos = $loc; next = None } }
+| "%(invalid)" { Error{ msg = (Printf.sprintf "invalid directive %s" $1); pos = $loc; next = None }}
 | msg=error; ";" { Error{ msg; pos = $loc; next = None} }
 ;
 
 params:
-| params "{...}" { $1 @ $2 }
-| "{...}" { [ $1 ] }
+| params; p="{...}" { $1 @ [ (p, $loc(p)) ] }
+| "{...}" { [ ($1, $loc) ] }
 ;
 
 (* grammar_declaration. *)
 grammar_declaration:
-| symbol_declaration { DirectiveList ($1) }
-| p="%start"; symbols=symbols_1 { PercentStart{ symbols; pos = $loc(p) } }
+| symbol_declaration { GrammarDeclarationList ($1) }
+| "%start"; symbols=symbols_1 { PercentStart{ symbols; pos = $loc($1) } }
 | p=code_props_type; c="{...}"; symlist=generic_symlist {
     match p with
-    | PercentDestructor v -> PercentDestructor{ v with code = c; symlist } 
-    | PercentPrinter v -> PercentPrinter{ v with code = c; symlist }
+    | PercentDestructor v -> PercentDestructor{ v with code = (c, $loc(c)); symlist } 
+    | PercentPrinter v -> PercentPrinter{ v with code = (c, $loc(c)); symlist }
+    | _ -> raise (SyntaxError "invalid directive")
 }
 | "%default-prec" { PercentDefaultPrec($loc) }
 | "%no-default-prec" { PercentNoDefaultPrec($loc) }
-| p="%code"; code="{...}" { PercentCode{ id = None; code; pos = $loc(p) } }
-| p="%code"; id=ID; code="{...}" { PercentCode{ id = Some id; code; pos = $loc(p) } }
-| p="%union"; name=union_name; code="{...}" { PercentUnion{ name; code; pos = $loc(p) } }
+| "%code"; code="{...}" { PercentCode{ id = None; code = (code, $loc(code)); pos = $loc($1) } }
+| "%code"; id=ID; code="{...}" { PercentCode{ id = Some (id, $loc(id)); code = (code, $loc(code)); pos = $loc($1) } }
+| "%union"; name=union_name; code="{...}" { PercentUnion{ name; code = (code, $loc(code)); pos = $loc($1) } }
 ;
 
 code_props_type:
@@ -276,12 +284,12 @@ tag_opt:
 
 generic_symlist:
 | generic_symlist_item { [ $1 ] }
-| generic_symlist generic_symlist_item { $1 @ $2 }
+| generic_symlist generic_symlist_item { $1 @ [ $2 ] }
 ;
 
 generic_symlist_item:
-| symbol { $1 }
-| tag { $1 }
+| symbol { Sym $1 }
+| tag { Tag $1 }
 ;
 
 tag:
@@ -327,7 +335,7 @@ int_opt:
 
 alias:
 | { None }
-| string_as_id { Some ($1, $loc) }
+| string_as_id { Some $1 }
 | TSTRING { Some ($1, $loc) }
 ;
 
@@ -357,8 +365,7 @@ token_decl_for_prec:
     | PRECEDENCE_PREC -> PercentPrecedence{ tag = None; id; number; pos = $loc }
     | UNKNOWN_PREC -> raise (SyntaxError "prec directives not found")
 }
-| string_as_id {
-    let id = ($1, $loc) in
+| id=string_as_id {
     match !current_prec with
     | LEFT_PREC -> PercentLeft{ tag = None; id; number = None; pos = $loc }
     | RIGHT_PREC -> PercentRight{ tag = None; id; number = None; pos = $loc }
@@ -373,9 +380,9 @@ token_decl_for_prec:
 
 (* A non empty list of typed symbols (for %type). *)
 symbol_decls:
-| syms=symbols_1 { syms }
+| syms=symbols_1 { List.map (fun id -> PercentType{ tag = None; id; pos = $loc }) syms }
 | sds1=symbol_decls; t=TAG; sds2=symbols_1 {
-    sds1 @ (tagging (TagName (t, $loc(t))) sds2)
+    sds1 @ (tagging (TagName (t, $loc(t))) (List.map (fun id -> PercentType{ tag = None; id; pos = $loc }) sds2))
 }
 ;
 
@@ -400,19 +407,19 @@ rules_or_grammar_declaration:
 | rules { $1 }
 | grammar_declaration ";" {
     match $1 with
-    | DirectiveList s -> (
+    | GrammarDeclarationList s -> (
         match (grammardecl s) with
         | None -> raise (SyntaxError "empty directives")
         | Some v -> v
     )
-    | _ -> $1
+    | _ -> GrammarDecl{ directive = $1; next = None }
 }
 | error ";" { raise (SyntaxError error)}
 ;
 
 rules:
 | id=id_colon; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
-    Rule{ id; named_ref; rhs; pos=$loc }
+    Rule{ id; named_ref; rhs; pos=$loc; next=None }
 }
 ;
 
@@ -426,15 +433,15 @@ rhs:
 | { [] }
 | rhs; symbol=symbol; named_ref=named_ref_opt { $1 @ [ RhsSym{ symbol; named_ref } ] }
 | rhs; tag=tag_opt; code="{...}"; named_ref=named_ref_opt {
-    $1 @ [ RhsMidrule{tag; code; named_ref} ]
+    $1 @ [ RhsMidrule{tag; code = (code, $loc(code)); named_ref} ]
 }
-| rhs; p="%?{...}" { $1 @ [ RhsPredicate p ] }
-| rhs; p="%empty" { $1 @ [ RhsPercentEmpty ($loc(p)) ] }
+| rhs; "%?{...}" { $1 @ [ RhsPredicate ($2, $loc($2)) ] }
+| rhs; "%empty" { $1 @ [ RhsPercentEmpty ($loc($2)) ] }
 | rhs; "%prec"; s=symbol { $1 @ [ RhsPercentPrec s ] }
-| rhs; "%dprec"; i=INT_LITERAL { $1 @ [ RhsPercentDprec i ] }
-| rhs; "%merge"; t=TAG { $1 @ [ RhsPercentMerge t ] }
-| rhs; "%expect"; i=INT_LITERAL { $1 @ [ RhsPercentExpect i ] }
-| rhs; "%expect-rr"; i=INT_LITERAL { $1 @ [ RhsPercentExpectRR i ] }
+| rhs; "%dprec"; i=INT_LITERAL { $1 @ [ RhsPercentDprec (i, $loc(i)) ] }
+| rhs; "%merge"; t=TAG { $1 @ [ RhsPercentMerge (TagName (t, $loc(t))) ] }
+| rhs; "%expect"; i=INT_LITERAL { $1 @ [ RhsPercentExpect (i, $loc(i)) ] }
+| rhs; "%expect-rr"; i=INT_LITERAL { $1 @ [ RhsPercentExpectRR (i, $loc(i)) ] }
 ;
 
 named_ref_opt:
@@ -481,5 +488,5 @@ string_as_id:
 
 epilogue_opt:
 | { None }
-| "%%" EPILOGUE { Some ($1, $loc) }
+| "%%"; e=EPILOGUE { Some (e, $loc) }
 ;
