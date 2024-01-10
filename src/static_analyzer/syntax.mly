@@ -117,7 +117,7 @@ BRACED_PREDICATE  "%?{...}"
 BRACKETED_ID      "[identifier]"
 EPILOGUE          "epilogue"
 ID                "identifier"
-ID_COLON          "identifier:"
+(*ID_COLON          "identifier:"*)
 PROLOGUE          "%{...%}"
 TAG               "<tag>"
 PERCENT_FIXED_OUTPUT_FILES  "%fixed-output-files"
@@ -161,7 +161,7 @@ EOF         "eof"
 %%
 
 input:
-| p=prologue_declarations; "%%" g=grammar; e=epilogue_opt {
+| p=prologue_declarations; "%%" g=grammar; e=epilogue_opt "eof" {
     let pd =
         match (prologuedeclarations p) with
         | None -> raise (SyntaxError "empty prologue/declarations")
@@ -418,7 +418,11 @@ rules_or_grammar_declaration:
 ;
 
 rules:
-| id=id_colon; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
+(*| id=id_colon; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
+    Rule{ id; named_ref; rhs; pos=$loc; next=None }
+}
+*)
+| id=id; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
     Rule{ id; named_ref; rhs; pos=$loc; next=None }
 }
 ;
@@ -472,9 +476,11 @@ id:
 | CHAR_LITERAL { ($1, $loc) }
 ;
 
+(*
 id_colon:
 | ID_COLON { ($1, $loc) }
 ;
+*)
 
 symbol:
 | id { SymID $1 }

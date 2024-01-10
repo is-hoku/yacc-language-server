@@ -4,7 +4,7 @@ open Syntax
 open Types
 open Language_server.Import
 
-exception Lex_error of position * string
+exception LexError of string
 
 type state =
     | INITIAL
@@ -12,7 +12,7 @@ type state =
     | SC_ESCAPED_CHARACTER (* Characters and strings in directives/rules. *)
     | SC_ESCAPED_STRING (* Characters and strings in directives/rules. *)
     | SC_ESCAPED_TSTRING (* Characters and strings in directives/rules. *)
-    | SC_AFTER_IDENTIFIER (* A identifier was just read in directives/rules.  Special state to capture the sequence 'identifier :'. *)
+    (*| SC_AFTER_IDENTIFIER (* A identifier was just read in directives/rules.  Special state to capture the sequence 'identifier :'. *)*)
     | SC_TAG (* POSIX says that a tag must be both an id and a C union member, but historically almost any character is allowed in a tag.  We disallow NUL, as this simplifies our implementation.  We match angle brackets in nested pairs: several languages use them for generics/template types. *)
     (* Four types of user code *)
     | SC_PROLOGUE (* prologue (code between '%{' '%}' in the first section, before %%) *)
@@ -20,15 +20,14 @@ type state =
     | SC_EPILOGUE (* epilogue (everything after the second %%). *)
     | SC_PREDICATE (* predicate (code between '%?{' and '{' in middle section) *)
     | SC_BRACKETED_ID (* Bracketed identifiers support. *)
-    | SC_RETURN_BRACKETED_ID (* Bracketed identifiers support. *)
+    (*| SC_RETURN_BRACKETED_ID (* Bracketed identifiers support. *)*)
     | SC_COMMENT (* C and C++ comments in code. *)
     | SC_LINE_COMMENT (* C and C++ comments in code. *)
     | SC_CHARACTER (* Strings and characters in code. *)
     | SC_STRING (* Strings and characters in code. *)
-    | RETURN_EOF (* return EOF *)
 
 let state = ref INITIAL
-let bracketed_id_context_state = ref INITIAL
+(*let bracketed_id_context_state = ref INITIAL*)
 let bracketed_id_str = ref None
 let saved_pos = ref {
     pos_fname = "initial";
@@ -47,7 +46,9 @@ let buf = Buffer.create 256
 
 let complain msg lexbuf =
     let pos = lexeme_start_p lexbuf in
-    raise (Lex_error (pos, msg))
+    (* raise (Lex_error (pos, msg)) *)
+    (* TODO: push errors to a queue for later reporting *)
+    print_endline (Printf.sprintf "%s, line %d, character %d" msg pos.pos_lnum (pos.pos_cnum - pos.pos_bol))
 
 let string_grow str =
   Buffer.add_string buf str
@@ -60,7 +61,7 @@ let string_finish () =
 let string_1grow char_ =
   Buffer.add_char buf char_
 
-let string_grow_escape c =
+let string_grow_escape c lexbuf =
     let valid = (0 < c && c <= 255) in
     if not valid then
         complain (Printf.sprintf "invalid number after \\-escape: %s" (lexeme lexbuf)) lexbuf;
@@ -83,29 +84,20 @@ let get_range lexbuf =
 let save_pos lexbuf =
   saved_pos := lexbuf.lex_curr_p
 
+(*
 let rollback lexbuf =
   lexbuf.lex_curr_p <- !saved_pos
+*)
 
-let report_error msg lexbuf =
-    let pos = lexeme_start_p lexbuf in
-    raise (Lex_error (pos, msg))
-
-let return_eof () =
-    EOF
-
-let unexpected_eof c token lexbuf =
-    begin_ RETURN_EOF;
-    complain (Printf.sprintf "missing %s at end of file" c) lexbuf;
-    match token with
-    | Some t -> token
-    | None -> ()
+let unexpected_eof c lexbuf =
+    complain (Printf.sprintf "missing %s at end of file" c) lexbuf
 
 let unexpected_newline c lexbuf =
     complain (Printf.sprintf "missing %s at end of line" c) lexbuf;
-    newline lexbuf
+    new_line lexbuf
 
-let deprecated_directive d =
-    complain (Printf.sprintf "deprecated directive: %s" d) lexbuf;
+let deprecated_directive d lexbuf =
+    complain (Printf.sprintf "deprecated directive: %s" d) lexbuf
 }
 
 let letter = ['.' 'a'-'z' 'A'-'Z' '_']
@@ -189,17 +181,17 @@ rule initial = parse
   | "%name" ['-' '_'] "prefix" eqopt sp     { PERCENT_NAME_PREFIX (lexeme lexbuf) }
 
   (* Deprecated since Bison 2.7.90, 2012. *)
-  | "%default" ['-' '_'] "prec"             { deprecated_directive ("%default-prec") }
-  | "%error" ['-' '_'] "verbose"            { PERCENT_ERROR_VERBOSE (lexeme lexbuf) }
-  | "%expect" ['-' '_'] "rr"                { deprecated_directive ("%expect-rr") }
+  | "%default" ['-' '_'] "prec"             { deprecated_directive ("%default-prec") lexbuf; PERCENT_DEFAULT_PREC }
+  | "%error" ['-' '_'] "verbose"            { PERCENT_ERROR_VERBOSE }
+  | "%expect" ['-' '_'] "rr"                { deprecated_directive ("%expect-rr") lexbuf; PERCENT_EXPECT_RR }
   | "%file-prefix" eqopt                    { PERCENT_FILE_PREFIX (lexeme lexbuf) }
-  | "%fixed" ['-' '_'] "output" ['-' '_'] "files"   { deprecated_directive ("%output \"y.tab.c\"") }
-  | "%no" ['-' '_'] "default" ['-' '_'] "prec"      { deprecated_directive ("%no-default-prec") }
-  | "%no" ['-' '_'] "lines"                 { deprecated_directive ("%no-lines") }
-  | "%output" eqopt                         { deprecated_directive ("%output") }
-  | "%token" ['-' '_'] "table"              { deprecated_directive ("%token-table") }
+  | "%fixed" ['-' '_'] "output" ['-' '_'] "files"   { deprecated_directive ("%output \"y.tab.c\"") lexbuf; PERCENT_FIXED_OUTPUT_FILES ("\"y.tab.c\"") }
+  | "%no" ['-' '_'] "default" ['-' '_'] "prec"      { deprecated_directive ("%no-default-prec") lexbuf; PERCENT_NO_DEFAULT_PREC }
+  | "%no" ['-' '_'] "lines"                 { deprecated_directive ("%no-lines") lexbuf; PERCENT_NO_LINES }
+  | "%output" eqopt                         { deprecated_directive ("%output") lexbuf; PERCENT_OUTPUT }
+  | "%token" ['-' '_'] "table"              { deprecated_directive ("%token-table") lexbuf; PERCENT_TOKEN_TABLE }
 
-  | "%" id                                  { complain (Printf.sprintf "invalid directive: %s" (lexeme lexbuf)) lexbuf }
+  | "%" id                                  { complain (Printf.sprintf "invalid directive: %s" (lexeme lexbuf)) lexbuf; PERCENT_INVALID (lexeme lexbuf) }
 
   | ':'     { COLON }
   | '='     { EQUAL }
@@ -207,8 +199,11 @@ rule initial = parse
   | ';'     { SEMICOLON }
 
   | id      {
-      bracketed_id_str := None;
-      begin_ SC_AFTER_IDENTIFIER
+      (*bracketed_id_str := None;
+      begin_ SC_AFTER_IDENTIFIER;
+      save_pos lexbuf;
+      sc_after_identifier lexbuf id*)
+      ID (lexeme lexbuf)
   }
   | int     { INT_LITERAL (int_of_string (lexeme lexbuf)) }
   | xint    { INT_LITERAL (int_of_string (lexeme lexbuf)) }
@@ -216,53 +211,57 @@ rule initial = parse
      accept "1FOO" as "1 FOO".  *)
   | int id  {
       complain (Printf.sprintf "invalid identifier: %s" (lexeme lexbuf)) lexbuf ;
-      GRAM_error
+      GRAM_error (Printf.sprintf "invalid identifier: %s" (lexeme lexbuf))
   }
 
   (* Characters. *)
-  | "'"     { begin_ SC_ESCAPED_CHARACTER }
+  | "'"     { begin_ SC_ESCAPED_CHARACTER; sc_escaped_character lexbuf }
 
   (* Strings. *)
-  | '"'    { string_1grow '"'; begin_ SC_ESCAPED_STRING }
-  | "_(\""  { string_1grow '"'; begin_ SC_ESCAPED_TSTRING }
+  | '"'    { string_1grow '"'; begin_ SC_ESCAPED_STRING; sc_escaped_string lexbuf }
+  | "_(\""  { string_1grow '"'; begin_ SC_ESCAPED_TSTRING; sc_escaped_tstring lexbuf }
 
   (* Prologue. *)
-  | "%{"    { begin_ SC_PROLOGUE }
+  | "%{"    { begin_ SC_PROLOGUE; sc_prologue lexbuf }
 
   (* Code in between braces. *)
   | '{'     {
       string_grow (lexeme lexbuf);
       nesting := 0;
-      begin_ SC_BRACED_CODE
+      begin_ SC_BRACED_CODE;
+      sc_braced_code lexbuf
   }
 
   (* Semantic predicate. *)
   | "%?" ([' ' '\t' '\011' '\012'] | eol)* '{'    {
       string_grow (lexeme lexbuf);
       nesting := 0;
-      begin_ SC_PREDICATE
+      begin_ SC_PREDICATE;
+      sc_predicate lexbuf
   }
 
   (* A type. *)
   | "<*>"   { TAG_ANY }
   | "<>"    { TAG_NONE }
-  | '<'     { nesting := 0; begin_ SC_TAG }
+  | '<'     { nesting := 0; begin_ SC_TAG; sc_tag lexbuf }
 
   | "%%"    {
-      if (incr percent_percent_count) == 2 then
-          begin_ SC_EPILOGUE
+      incr percent_percent_count;
+      if !percent_percent_count == 2 then
+          begin_ SC_EPILOGUE;
           PERCENT_PERCENT
   }
 
   | '['     {
-      bracketed_id_str := None
-      bracketed_id_context_state := !state;
-      begin_ SC_BRACKETED_ID
+      bracketed_id_str := None;
+      (*bracketed_id_context_state := !state;*)
+      begin_ SC_BRACKETED_ID;
+      sc_bracketed_id lexbuf
   }
 
   | [^ '\\' '[' 'A'-'Z' 'a'-'z' '0'-'9' '_' '<' '>' '{' '}' '"' '\'' '*' ';' '|' '=' '/' ',' '\r' '\n' '\t' '\011' '\012']+ | char {
       complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
-      GRAM_error
+      GRAM_error (Printf.sprintf "invalid character %s" (lexeme lexbuf))
   }
 
   | eof { EOF }
@@ -271,117 +270,231 @@ rule initial = parse
 (* INITIAL,SC_AFTER_IDENTIFIER,SC_BRACKETED_ID,SC_RETURN_BRACKETED_ID *)
 and common_initial_scafteridentifier_scbracketedid_screturnbracketedid = parse
   (* Comments and white space. *)
-  | ','                                     { complain "stray ',' treated as white space" lexbuf }
-  | [' ' '\t' '\r' '\011' '\012'] eol       { new_line lexbuf }
-  | "//" [^ '\n' '\r']* eol                       { (* ignore *) }
-  | "/*"                                    { context_state := !state; begin_ SC_YACC_COMMENT }
-  | "#line " int (" \"" [^ '"']* '"')? eol { (* ignore *) }
+  | ','                                     {
+      complain "stray ',' treated as white space" lexbuf;
+      match !state with
+      | INITIAL -> initial lexbuf
+      (*| SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf*)
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      (*| SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf*)
+      | _ -> raise (LexError "invalid state")
+  }
+  | [' ' '\t' '\r' '\011' '\012'] eol       {
+      new_line lexbuf;
+      match !state with
+      | INITIAL -> initial lexbuf
+      (*| SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf*)
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      (*| SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf*)
+      | _ -> raise (LexError "invalid state")
+  }
+  | "//" [^ '\n' '\r']* eol                 {
+      match !state with
+      | INITIAL -> initial lexbuf
+      (*| SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf*)
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      (*| SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf*)
+      | _ -> raise (LexError "invalid state")
+  }
+  | "/*"                                    { context_state := !state; begin_ SC_YACC_COMMENT; sc_yacc_comment lexbuf }
+  | "#line " int (" \"" [^ '"']* '"')? eol {
+      match !state with
+      | INITIAL -> initial lexbuf
+      (*| SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf*)
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      (*| SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf*)
+      | _ -> raise (LexError "invalid state")
+  }
 
 (* This implementation does not support \0. *)
 
-and sc_after_identifier = parse
+(*
+and sc_after_identifier id = parse
   | '['     {
       match !bracketed_id_str with
       | Some s ->
-              rollback lexbuf;
-              save_pos lexbuf;
+              (*rollback lexbuf;
+              save_pos lexbuf;*)
               begin_ SC_RETURN_BRACKETED_ID;
-              ID(s)
+              (*ID(s)*)
       | None ->
               bracketed_id_context_state := !state;
-              begin_ SC_BRACKETED_ID
+              begin_ SC_BRACKETED_ID;
+              sc_bracketed_id lexbuf
   }
   | ':'     {
-      rollback lexbuf;
-      match !bracketed_id_str with
+      (*rollback lexbuf;*)
+      (match !bracketed_id_str with
       | Some _ ->
-              save_pos lexbuf;
+              (*save_pos lexbuf;*)
               begin_ SC_RETURN_BRACKETED_ID
-      | None -> begin_ INITIAL;
-      ID_COLON
+      | None -> begin_ INITIAL);
+      ID_COLON (id)
   }
   | char   {
-      rollback lexbuf;
-      match !bracketed_id_str with
-      | Some _ ->
-              save_pos lexbuf;
-              begin_ SC_RETURN_BRACKETED_ID
-      | None -> begin_ INITIAL;
-      ID
+      (*rollback lexbuf;*)
+      (match !bracketed_id_str with
+      | Some _ -> begin_ SC_RETURN_BRACKETED_ID
+      | None -> begin_ INITIAL);
+      ID (id)
   }
   | eof     {
-      rollback lexbuf;
+      (*rollback lexbuf;*)
       match !bracketed_id_str with
       | Some _ ->
-              save_pos lexbuf;
-              begin_ SC_RETURN_BRACKETED_ID
+              (*save_pos lexbuf;*)
+              begin_ SC_RETURN_BRACKETED_ID;
+              sc_return_bracketed_id lexbuf
       | None -> begin_ INITIAL;
-      ID
+      ID (id)
   }
   | _       { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
+*)
 
 and sc_bracketed_id = parse
   | id      {
       match !bracketed_id_str with
       | Some _ ->
-              complain (Printf.sprintf "unexpected identifier in bracketed name: %s" lexeme lexbuf) lexbuf;
-              GRAM_error
+              complain (Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf)) lexbuf;
+              GRAM_error (Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf))
       | None ->
-              bracketed_id_str := lexeme lexbuf
+              bracketed_id_str := Some (lexeme lexbuf);
+              sc_bracketed_id lexbuf
   }
   | ']'     {
-      begin_ !bracketed_id_context_state;
+      (*begin_ !bracketed_id_context_state;*)
+      begin_ !state;
       match !bracketed_id_str with
       | Some s ->
-              if INITIAL = !bracketed_id_context_state then
+              (*if INITIAL = !bracketed_id_context_state then*)
                   bracketed_id_str := None;
-                  BRACKETED_ID(s)
+                  BRACKETED_ID (s)
       | None ->
-              complain "an identifier expected" lexbuf;
-              GRAM_error
+              complain "identifiers expected" lexbuf;
+              GRAM_error "identifier expected"
   }
   | [^ ']' '.' 'A'-'Z' 'a'-'z' '0'-'9' '_' '/' ' ' '\t' '\r' '\n' '\011' '\012']+ | char    {
       complain "invalid characters in bracketed name" lexbuf;
-      GRAM_error
+      GRAM_error "invalid characters in bracketed name"
   }
   | eof     {
-      begin_ !bracketed_id_context_state;
+      (*begin_ !bracketed_id_context_state;*)
+      begin_!state;
       let token = match !bracketed_id_str with
       | Some s ->
-              if INITIAL = !bracketed_id_context_state then
+              (*if INITIAL = !bracketed_id_context_state then*)
                   bracketed_id_str := None;
                   BRACKETED_ID(s)
       | None ->
               BRACKETED_ID("?") in
-      unexpected_eof "]" Some(token) lexbuf
+      unexpected_eof "]" lexbuf;
+      token
   }
   | _       { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
 
+(*
 and sc_return_bracketed_id = parse
   | char    {
-      rollback lexbuf;
+      (*rollback lexbuf;*)
       let id = !bracketed_id_str in
       bracketed_id_str := None;
       begin_ INITIAL;
       BRACKETED_ID(id)
   }
   | _       { common_initial_scafteridentifier_scbracketedid_screturnbracketedid lexbuf }
+*)
 
 and sc_yacc_comment = parse
-  | "*/"            { begin_ !context_state }
-  | [^ '\n' '\r']   { (* continue *) }
-  | eof             { unexpected_eof "*/" None lexbuf; begin_ !context_state }
+  | "*/"            {
+      begin_ !context_state;
+      match !context_state with
+      | INITIAL -> initial lexbuf
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | [^ '\n' '\r']   {
+      match !context_state with
+      | INITIAL -> initial lexbuf
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | eof             {
+      unexpected_eof "*/" lexbuf;
+      begin_ !context_state;
+      match !context_state with
+      | INITIAL -> initial lexbuf
+      | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
 
 and sc_comment = parse
-  | '*' splice '/'  { string_grow (lexeme lexbuf); begin_ !context_state }
-  | eof             { unexpected_eof "*/" None lexbuf }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | '*' splice '/'  {
+      string_grow (lexeme lexbuf);
+      begin_ !context_state;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | eof             {
+      unexpected_eof "*/" lexbuf;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
 
 and sc_line_comment = parse
-  | eol             { string_grow (lexeme lexbuf); begin_ !context_state }
-  | splice          { string_grow (lexeme lexbuf) }
-  | eof             { begin_ !context_state }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | eol             {
+      string_grow (lexeme lexbuf);
+      begin_ !context_state;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | splice          {
+      string_grow (lexeme lexbuf);
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | eof             {
+      begin_ !context_state;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
 
 and sc_escaped_string = parse
   | '"'    {
@@ -395,10 +508,17 @@ and sc_escaped_string = parse
       string_1grow '"';
       let last_string = string_finish () in
       begin_ INITIAL;
-      unexpected_eof "\"" (Some(STRING(last_string))) lexbuf
+      unexpected_eof "\"" lexbuf;
+      STRING(last_string)
   }
-  | '\n'    { unexpected_newline (get_range lexbuf) '"' }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | '\n'    {
+      unexpected_newline "\"" lexbuf;
+      sc_escaped_string lexbuf
+  }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      sc_escaped_string lexbuf
+  }
   | _               { common_scescapedcharacter_scescapedstring_scescapedtstring lexbuf }
 
 and sc_escaped_tstring = parse
@@ -413,10 +533,17 @@ and sc_escaped_tstring = parse
       string_1grow '"';
       let last_string = string_finish () in
       begin_ INITIAL;
-      unexpected_eof "\")" (Some(TSTRING(last_string))) lexbuf
+      unexpected_eof "\")" lexbuf;
+      TSTRING(last_string)
   }
-  | '\n'            { unexpected_newline (get_range lexbuf) "\")" }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | '\n'            {
+      unexpected_newline "\")" lexbuf;
+      sc_escaped_tstring lexbuf
+  }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      sc_escaped_tstring lexbuf
+  }
   | _               { common_scescapedcharacter_scescapedstring_scescapedtstring lexbuf }
 
 and sc_escaped_character = parse
@@ -425,23 +552,30 @@ and sc_escaped_character = parse
       begin_ INITIAL;
       if (String.length last_string) != 1 then (
           complain "extra characters in character literal" lexbuf;
-          GRAM_error
+          GRAM_error "extra characters in character literal"
       ) else
           CHAR_LITERAL(last_string)
   }
-  | eol     { unexpected_newline (get_range lexbuf) "'" }
+  | eol     {
+      unexpected_newline "'" lexbuf;
+      sc_escaped_character lexbuf
+  }
   | eof     {
       let last_string = string_finish () in
       begin_ INITIAL;
       let token =
       if (String.length last_string) != 1 then (
           complain "extra characters in character literal" lexbuf;
-          GRAM_error
+          GRAM_error "extra characters in character literal"
       ) else
           CHAR_LITERAL(last_string) in
-      unexpected_eof "'" Some(token) lexbuf
+      unexpected_eof "'" lexbuf;
+      token
   }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      sc_escaped_character lexbuf
+  }
   | _               { common_scescapedcharacter_scescapedstring_scescapedtstring lexbuf }
 
 and sc_tag = parse
@@ -451,35 +585,111 @@ and sc_tag = parse
           let last_string = string_finish () in
           begin_ INITIAL;
           TAG(last_string)
-      else
-          string_grow (lexeme lexbuf)
+      else(
+          string_grow (lexeme lexbuf);
+          sc_tag lexbuf
+      )
   }
 
-  | ([^ '<' '>'] | "->")+   { string_grow (lexeme lexbuf) }
-  | '<'+                    { string_grow (lexeme lexbuf); nesting := nesting + (String.length (lexeme lexbuf)) }
+  | ([^ '<' '>'] | "->")+   {
+      string_grow (lexeme lexbuf);
+      sc_tag lexbuf
+  }
+  | '<'+                    {
+      string_grow (lexeme lexbuf);
+      nesting := !nesting + (String.length (lexeme lexbuf));
+      sc_tag lexbuf
+  }
 
   | eof                     {
       let last_string = string_finish () in
       begin_ INITIAL;
-      unexpected_eof ">" Some(TAG(last_string)) lexbuf
+      unexpected_eof ">" lexbuf;
+      TAG(last_string)
   }
 
 (* SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_TSTRING *)
 and common_scescapedcharacter_scescapedstring_scescapedtstring = parse
   | '\\' (['0'-'7'] ['0'-'7']? ['0'-'7']? as octal) {
-      string_grow_escape (int_of_string ("0o" ^ octal))
+      string_grow_escape (int_of_string ("0o" ^ octal)) lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
   }
   | "\\x" (['0'-'9' 'a'-'f' 'A'-'F']+ as hex) {
-      string_grow_escape (int_of_string ("0x" ^ hex))
+      string_grow_escape (int_of_string ("0x" ^ hex)) lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
   }
-  | "\\a"   { string_grow_escape '\007' }
-  | "\\b"   { string_grow_escape '\b' }
-  | "\\f"   { string_grow_escape '\012' }
-  | "\\n"   { string_grow_escape '\n' }
-  | "\\r"   { string_grow_escape '\r' }
-  | "\\t"   { string_grow_escape '\t' }
-  | "\\v"   { string_grow_escape '\011' }
-  | '\\' ['"' '\'' '?' '\\'] as ch { string_grow_escape ch.[1] }
+  | "\\a"   {
+      string_grow_escape (Char.code '\007') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | "\\b"   {
+      string_grow_escape (Char.code '\b') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | "\\f"   {
+      string_grow_escape (Char.code '\012') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | "\\n"   {
+      string_grow_escape (Char.code '\n') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | "\\r"   {
+      string_grow_escape (Char.code '\r') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | "\\t"   {
+      string_grow_escape (Char.code '\t') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | "\\v"   {
+      string_grow_escape (Char.code '\011') lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
+  | '\\' ['"' '\'' '?' '\\'] as ch {
+      string_grow_escape (Char.code ch.[1]) lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
+  }
   (*
   TODO: support "u0000" and "U00000000"
   | '\\' ('u' | 'U') ['0'-'9' 'a'-'f' 'A'-'F']{4} ['0'-'9' 'a'-'f' 'A'-'F']{4} as ucn {
@@ -488,54 +698,142 @@ and common_scescapedcharacter_scescapedstring_scescapedtstring = parse
   *)
   | '\\' (char | eol) {
       complain (Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf)) lexbuf;
-      string_1grow '?'
+      string_1grow '?';
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
   }
   | '\\' {
       let c = match !state with
       | SC_ESCAPED_CHARACTER -> "?'"
       | SC_ESCAPED_STRING -> "?\""
       | _ -> "?\")" in
-      unexpected_eof c None lexbuf
+      unexpected_eof c lexbuf;
+      match !state with
+      | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
+      | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
+      | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
+      | _ -> raise (LexError "invalid state")
   }
 (* SC_CHARACTER,SC_STRING *)
-and common_sccharacter_scstringn = parse
-  | (splice | '\\' splice [^ '\n' '[' ']']) { string_grow (lexeme lexbuf) }
+and common_sccharacter_scstring = parse
+  | (splice | '\\' splice [^ '\n' '[' ']']) {
+      string_grow (lexeme lexbuf);
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
 
 and sc_character = parse
-  | '\''            { string_grow (lexeme lexbuf); begin_ !context_state }
-  | eol             { unexpected_newline (get_range lexbuf) '\'' }
-  | eof             { unexpected_eof "'" None lexbuf }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
-  | _               { common_scharacter_scstring lexbuf }
+  | '\''            {
+      string_grow (lexeme lexbuf);
+      begin_ !context_state;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | eol             {
+      unexpected_newline "'" lexbuf;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | eof             {
+      unexpected_eof "'" lexbuf;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | _               { common_sccharacter_scstring lexbuf }
 
 and sc_string = parse
-  | '"'             { string_grow (lexeme lexbuf); begin_ !context_state }
-  | eol             { unexpected_newline (get_range lexbuf) '"' }
-  | eof             { unexpected_eof "\"" None lexbuf }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
-  | _               { common_scharacter_scstring lexbuf }
+  | '"'             {
+      string_grow (lexeme lexbuf);
+      begin_ !context_state;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | eol             {
+      unexpected_newline "\"" lexbuf;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | eof             {
+      unexpected_eof "\"" lexbuf;
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | (mbchar | char) {
+      string_grow (lexeme lexbuf);
+      match !context_state with
+      | SC_BRACED_CODE -> sc_braced_code lexbuf
+      | SC_PROLOGUE -> sc_prologue lexbuf
+      | SC_EPILOGUE -> sc_epilogue lexbuf
+      | SC_PREDICATE -> sc_predicate lexbuf
+      | _ -> raise (LexError "invalid token")
+  }
+  | _               { common_sccharacter_scstring lexbuf }
 
 (* SC_BRACED_CODE,SC_PROLOGUE,SC_EPILOGUE,SC_PREDICATE *)
 and common_scbracedcode_scprologue_scepilogue_scpredicate = parse
   | '\''    {
-      string_grow (lexeme lexbuf)
+      string_grow (lexeme lexbuf);
       context_state := !state;
-      begin_ SC_CHARACTER
+      begin_ SC_CHARACTER;
+      sc_character lexbuf
   }
   | '"'     {
-      string_grow (lexeme lexbuf)
+      string_grow (lexeme lexbuf);
       context_state := !state;
-      begin_ SC_STRING
+      begin_ SC_STRING;
+      sc_string lexbuf
   }
   | '/' splice '*'  {
-      string_grow (lexeme lexbuf)
+      string_grow (lexeme lexbuf);
       context_state := !state;
-      begin_ SC_COMMENT
+      begin_ SC_COMMENT;
+      sc_comment lexbuf
   }
   | '/' splice '/'  {
-      string_grow (lexeme lexbuf)
+      string_grow (lexeme lexbuf);
       context_state := !state;
-      begin_ SC_LINE_COMMENT
+      begin_ SC_LINE_COMMENT;
+      sc_line_comment lexbuf
   }
 
 and sc_braced_code = parse
@@ -545,15 +843,32 @@ and sc_braced_code = parse
       if !nesting < 0 then
           let last_string = string_finish () in
           begin_ INITIAL;
-          BRACED_CODE(last_string)
+          BRACED_CODE (last_string)
+      else
+          sc_braced_code lexbuf
   }
-  | (mbchar | char)         { string_grow (lexeme lexbuf) }
-  | ('{' | '<' splice '%')  { string_grow (lexeme lexbuf); incr nesting }
-  | '%' splice '>'          { string_grow (lexeme lexbuf); decr nesting }
-  | '<' splice '<'          { string_grow (lexeme lexbuf) }
+  | (mbchar | char)         {
+      string_grow (lexeme lexbuf);
+      sc_braced_code lexbuf
+  }
+  | ('{' | '<' splice '%')  {
+      string_grow (lexeme lexbuf);
+      incr nesting;
+      sc_braced_code lexbuf
+  }
+  | '%' splice '>'          {
+      string_grow (lexeme lexbuf);
+      decr nesting;
+      sc_braced_code lexbuf
+  }
+  | '<' splice '<'          {
+      string_grow (lexeme lexbuf);
+      sc_braced_code lexbuf
+  }
   | eof                     {
       let last_string = string_finish () in
-      unexpected_eof "}" Some(BRACED_CODE(last_string)) lexbuf
+      unexpected_eof "}" lexbuf;
+      BRACED_CODE(last_string)
   }
   | _   { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
 
@@ -564,16 +879,33 @@ and sc_predicate = parse
           let last_string = string_finish () in
           begin_ INITIAL;
           BRACED_PREDICATE(last_string)
-      else
-          string_1grow '}'
+      else (
+          string_1grow '}';
+          sc_predicate lexbuf
+      )
   }
-  | (mbchar | char)         { string_grow (lexeme lexbuf) }
-  | ('{' | '<' splice '%')  { string_grow (lexeme lexbuf); incr nesting }
-  | '%' splice '>'          { string_grow (lexeme lexbuf); decr nesting }
-  | '<' splice '<'          { string_grow (lexeme lexbuf) }
+  | (mbchar | char)         {
+      string_grow (lexeme lexbuf);
+      sc_predicate lexbuf
+  }
+  | ('{' | '<' splice '%')  {
+      string_grow (lexeme lexbuf);
+      incr nesting;
+      sc_predicate lexbuf
+  }
+  | '%' splice '>'          {
+      string_grow (lexeme lexbuf);
+      decr nesting;
+      sc_predicate lexbuf
+  }
+  | '<' splice '<'          {
+      string_grow (lexeme lexbuf);
+      sc_predicate lexbuf
+  }
   | eof                     {
       let last_string = string_finish () in
-      unexpected_eof "}" Some(BRACED_PREDICATE(last_string)) lexbuf
+      unexpected_eof "}" lexbuf;
+      BRACED_PREDICATE(last_string)
   }
   | _ { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
 
@@ -585,9 +917,10 @@ and sc_prologue = parse
   }
   | eof {
       let last_string = string_finish () in
-      unexpected_eof "%}" Some(PROLOGUE(last_string)) lexbuf
+      unexpected_eof "%}" lexbuf;
+      PROLOGUE(last_string)
   }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | (mbchar | char) { string_grow (lexeme lexbuf); sc_prologue lexbuf }
   | _               { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
 
 and sc_epilogue = parse
@@ -596,7 +929,7 @@ and sc_epilogue = parse
       begin_ INITIAL;
       EPILOGUE(last_string)
   }
-  | (mbchar | char) { string_grow (lexeme lexbuf) }
+  | (mbchar | char) { string_grow (lexeme lexbuf); sc_epilogue lexbuf }
   | _               { common_scbracedcode_scprologue_scepilogue_scpredicate lexbuf }
 
 {
@@ -607,17 +940,16 @@ let read_token lexbuf =
     | SC_ESCAPED_CHARACTER -> sc_escaped_character lexbuf
     | SC_ESCAPED_STRING -> sc_escaped_string lexbuf
     | SC_ESCAPED_TSTRING -> sc_escaped_tstring lexbuf
-    | SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf
+    (*| SC_AFTER_IDENTIFIER -> sc_after_identifier lexbuf*)
     | SC_TAG -> sc_tag lexbuf
     | SC_PROLOGUE -> sc_prologue lexbuf
-    | SC_BRACED_CODE -> sc_bracked_code lexbuf
+    | SC_BRACED_CODE -> sc_braced_code lexbuf
     | SC_EPILOGUE -> sc_epilogue lexbuf
     | SC_PREDICATE -> sc_predicate lexbuf
     | SC_BRACKETED_ID -> sc_bracketed_id lexbuf
-    | SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf
+    (*| SC_RETURN_BRACKETED_ID -> sc_return_bracketed_id lexbuf*)
     | SC_COMMENT -> sc_comment lexbuf
     | SC_LINE_COMMENT -> sc_line_comment lexbuf
     | SC_CHARACTER -> sc_character lexbuf
     | SC_STRING -> sc_string lexbuf
-    | RETURN_EOF -> return_eof ()
 }
