@@ -1,0 +1,5 @@
+(test
+ (name static_analyzer_tests)
+ (libraries language_server static_analyzer)
+ (deps (glob_files ./testcase/*))
+)

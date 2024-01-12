@@ -1,5 +1,8 @@
 type param_type = PARAM_NONE | PARAM_LEX | PARAM_PARSE | PARAM_BOTH
+[@@deriving show]
+
 type symbol_class = UNKNOWN_SYM | NTERM_SYM | TOKEN_SYM | PCT_TYP_SYM
+[@@deriving show]
 
 type prec_class =
   | UNKNOWN_PREC
@@ -7,8 +10,18 @@ type prec_class =
   | RIGHT_PREC
   | NONASSOC_PREC
   | PRECEDENCE_PREC
+[@@deriving show]
 
 type pos = Lexing.position * Lexing.position
+
+let pp_pos fmt (pos : Lexing.position * Lexing.position) =
+  let s = fst pos in
+  let e = snd pos in
+  Format.fprintf fmt
+    {|({ pos_fname = %s; pos_lnum = %d; pos_bol = %d; pos_cnum = %d },
+{ pos_fname = %s; pos_lnum = %d; pos_bol = %d; pos_cnum = %d }|}
+    s.pos_fname s.pos_lnum s.pos_bol s.pos_cnum e.pos_fname e.pos_lnum e.pos_bol
+    e.pos_cnum
 
 exception SyntaxError of string
 
@@ -200,4 +213,4 @@ and rhs =
   | RhsPercentExpect of int_
   | RhsPercentExpectRR of int_
 
-and epilogue = string_
+and epilogue = string_ [@@deriving show]

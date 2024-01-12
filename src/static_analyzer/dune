@@ -4,6 +4,7 @@
 (library
  (name static_analyzer)
  (public_name language_server.static_analyzer)
+ (preprocess (pps ppx_deriving.show))
  (libraries language_server))
 
 (rule
