@@ -18,10 +18,8 @@ let pp_pos fmt (pos : Lexing.position * Lexing.position) =
   let s = fst pos in
   let e = snd pos in
   Format.fprintf fmt
-    {|({ pos_fname = %s; pos_lnum = %d; pos_bol = %d; pos_cnum = %d },
-{ pos_fname = %s; pos_lnum = %d; pos_bol = %d; pos_cnum = %d }|}
-    s.pos_fname s.pos_lnum s.pos_bol s.pos_cnum e.pos_fname e.pos_lnum e.pos_bol
-    e.pos_cnum
+    "({ line = %d; character = %d }, { line = %d; character = %d })" s.pos_lnum
+    (s.pos_cnum - s.pos_bol) e.pos_lnum (e.pos_cnum - e.pos_bol)
 
 exception SyntaxError of string
 

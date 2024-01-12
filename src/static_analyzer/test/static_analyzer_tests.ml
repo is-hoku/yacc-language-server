@@ -1,16 +1,14 @@
 open Static_analyzer
 
-let rec tokenize buf =
-  match Lexer.read_token buf with
-  | Syntax.EOF -> print_string "eof"
-  | _ -> tokenize buf
+let parse buf = Syntax.input Lexer.read_token buf |> Types.show |> print_endline
 
-let lex dir =
+let test dir =
   Array.iter
     (fun file ->
       let fin = open_in (Filename.concat dir file) in
       let buf = Lexing.from_channel fin in
-      tokenize buf)
+      parse buf;
+      close_in fin)
     (Sys.readdir dir)
 
-let () = lex "./testcase"
+let () = test "./testcase"
