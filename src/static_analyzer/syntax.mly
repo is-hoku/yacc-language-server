@@ -2,7 +2,7 @@
 open Types
 
 let dummy_string_ = ("", (Lexing.dummy_pos, Lexing.dummy_pos))
-let current_class = ref UNKNOWN_SYM
+let current_class = ref (UNKNOWN_SYM (Lexing.dummy_pos, Lexing.dummy_pos))
 let current_prec = ref UNKNOWN_PREC
 
 let tagging tag syms =
@@ -40,7 +40,16 @@ let rec prologuedeclarations = function
         | PercentTokenTable p -> Some (PercentTokenTable{ p with next = (prologuedeclarations xs) })
         | PercentVerbose p -> Some (PercentVerbose{ p with next = (prologuedeclarations xs) })
         | PercentYacc p -> Some (PercentYacc{ p with next = (prologuedeclarations xs) })
-        | GrammarDirective p -> Some (GrammarDirective{ p with next = (prologuedeclarations xs) })
+        | GrammarDirective _ as first ->
+                let rec append v =
+                      match v with
+                      | GrammarDirective { next = Some next; directive } ->
+                              Some (GrammarDirective{ directive; next = append next })
+                      | GrammarDirective { next = None; directive } ->
+                              Some (GrammarDirective{ directive; next = (prologuedeclarations xs) })
+                      | _ -> raise (SyntaxError "invalid input")
+                in
+                append first
         | _ -> raise (SyntaxError "invalid input")
 
 let rec grammarrules = function
@@ -59,10 +68,6 @@ let rec grammardecl = function
     | [] -> None
     | x :: xs -> Some (GrammarDecl{ directive = x; next = grammardecl xs })
 %}
-
-%token <string>
-STRING     "string"
-TSTRING    "translatable string"
 
 %token
 PERCENT_TOKEN       "%token"
@@ -112,14 +117,8 @@ PERCENT_VERBOSE         "%verbose"
 PERCENT_YACC            "%yacc"
 
 %token <string>
-BRACED_CODE       "{...}"
-BRACED_PREDICATE  "%?{...}"
-BRACKETED_ID      "[identifier]"
-EPILOGUE          "epilogue"
 ID                "identifier"
 (*ID_COLON          "identifier:"*)
-PROLOGUE          "%{...%}"
-TAG               "<tag>"
 PERCENT_FIXED_OUTPUT_FILES  "%fixed-output-files"
 GRAM_error        "(gram_error)"
 
@@ -133,7 +132,17 @@ TAG_ANY     "<*>"
 TAG_NONE    "<>"
 EOF         "eof"
 
-%token <string> CHAR_LITERAL "character literal"
+%token <string * Types.pos>
+PROLOGUE          "%{...%}"
+CHAR_LITERAL      "character literal"
+STRING            "string"
+TSTRING           "translatable string"
+TAG               "<tag>"
+BRACED_CODE       "{...}"
+BRACED_PREDICATE  "%?{...}"
+BRACKETED_ID      "[identifier]"
+EPILOGUE          "epilogue"
+
 %type <Types.tag option> tag_opt
 %token <int> INT_LITERAL "integer literal"
 (*%type <symbol> id id_colon string_as_id symbol token_decl token_decl_for_prec*)
@@ -198,26 +207,26 @@ prologue_declaration:
     )
     | _ -> GrammarDirective{ directive = $1; next = None }
 }
-| "%{...%}" { Prologue{ pos = $loc; next = None } }
+| "%{...%}" { Prologue{ code = fst $1; pos = snd $1; next = None } }
 | "%<flag>" { PercentFlag{ flag = $1; pos = $loc; next = None} }
 | "%define"; var=variable; v=value { PercentDefine{ variable = var; value = v; pos = $loc($1); next = None } }
 | "%header"; header=string_opt { PercentHeader{ header; pos = $loc($1); next = None } }
 | "%error-verbose" { PercentErrorVerbose{ pos = $loc; next = None} }
 | "%expect"; i=INT_LITERAL { PercentExpect{ conflict = (i, $loc(i)); pos = $loc($1); next = None } }
 | "%expect-rr"; i=INT_LITERAL { PercentExpectRR{ conflict = (i, $loc(i)); pos = $loc($1); next = None} }
-| "%file-prefix"; prefix=STRING { PercentFilePrefix{ prefix = (prefix, $loc(prefix)); pos = $loc($1); next = None } }
+| "%file-prefix"; prefix=STRING { PercentFilePrefix{ prefix; pos = $loc($1); next = None } }
 | "%glr-parser" { PercentGlrParser{ pos = $loc; next = None } }
-| "%initial-action"; code="{...}" { PercentInitialAction{ code = (code, $loc(code)); pos = $loc($1); next = None } }
-| "%language"; language=STRING { PercentLanguage{ language = (language, $loc(language)); pos = $loc($1); next = None } }
-| "%name-prefix"; directive=STRING { PercentNamePrefix{ directive = (directive, $loc(directive)); pos = $loc($1); next = None } }
+| "%initial-action"; code="{...}" { PercentInitialAction{ code; pos = $loc($1); next = None } }
+| "%language"; language=STRING { PercentLanguage{ language; pos = $loc($1); next = None } }
+| "%name-prefix"; directive=STRING { PercentNamePrefix{ directive; pos = $loc($1); next = None } }
 | "%no-lines" { PercentNoLines{ pos = $loc; next = None } }
 | "%nondeterministic-parser" { PercentNondeterministicParser{ pos = $loc; next = None } }
-| "%output"; file=STRING { PercentOutput{ file = (file, $loc(file)); pos = $loc($1); next = None } }
+| "%output"; file=STRING { PercentOutput{ file; pos = $loc($1); next = None } }
 | "%fixed-output-files" { PercentOutput{ file = ($1, $loc); pos = $loc($1); next = None } }
 | param_type="%param"; params=params { PercentParam{ param_type; params; pos = $loc(param_type); next = None } }
 | "%pure-parser" { PercentPureParser{ directive = $1; pos = $loc; next = None } }
-| "%require"; version=STRING { PercentRequire{ version = (version, $loc(version)); pos = $loc($1); next = None } }
-| "%skeleton"; file=STRING { PercentSkeleton{ file = (file, $loc(file)); pos = $loc($1); next = None } }
+| "%require"; version=STRING { PercentRequire{ version; pos = $loc($1); next = None } }
+| "%skeleton"; file=STRING { PercentSkeleton{ file; pos = $loc($1); next = None } }
 | "%token-table" { PercentTokenTable{ pos = $loc; next = None } }
 | "%verbose" { PercentVerbose{ pos = $loc; next = None } }
 | "%yacc" { PercentYacc{ pos = $loc; next = None } }
@@ -226,25 +235,25 @@ prologue_declaration:
 ;
 
 params:
-| params; p="{...}" { $1 @ [ (p, $loc(p)) ] }
-| "{...}" { [ ($1, $loc) ] }
+| params; p="{...}" { $1 @ [ p ] }
+| "{...}" { [ $1 ] }
 ;
 
 (* grammar_declaration. *)
 grammar_declaration:
 | symbol_declaration { GrammarDeclarationList ($1) }
 | "%start"; symbols=symbols_1 { PercentStart{ symbols; pos = $loc($1) } }
-| p=code_props_type; c="{...}"; symlist=generic_symlist {
+| p=code_props_type; code="{...}"; symlist=generic_symlist {
     match p with
-    | PercentDestructor v -> PercentDestructor{ v with code = (c, $loc(c)); symlist } 
-    | PercentPrinter v -> PercentPrinter{ v with code = (c, $loc(c)); symlist }
+    | PercentDestructor v -> PercentDestructor{ v with code; symlist } 
+    | PercentPrinter v -> PercentPrinter{ v with code; symlist }
     | _ -> raise (SyntaxError "invalid directive")
 }
 | "%default-prec" { PercentDefaultPrec($loc) }
 | "%no-default-prec" { PercentNoDefaultPrec($loc) }
-| "%code"; code="{...}" { PercentCode{ id = None; code = (code, $loc(code)); pos = $loc($1) } }
-| "%code"; id=ID; code="{...}" { PercentCode{ id = Some (id, $loc(id)); code = (code, $loc(code)); pos = $loc($1) } }
-| "%union"; name=union_name; code="{...}" { PercentUnion{ name; code = (code, $loc(code)); pos = $loc($1) } }
+| "%code"; code="{...}" { PercentCode{ id = None; code; pos = $loc($1) } }
+| "%code"; id=ID; code="{...}" { PercentCode{ id = Some (id, $loc(id)); code; pos = $loc($1) } }
+| "%union"; name=union_name; code="{...}" { PercentUnion{ name; code; pos = $loc($1) } }
 ;
 
 code_props_type:
@@ -259,11 +268,14 @@ union_name:
 ;
 
 symbol_declaration:
-| "%nterm" midrule({ current_class := NTERM_SYM }) syms=nterm_decls { syms }
-| "%token" midrule({ current_class := TOKEN_SYM }) syms=token_decls { syms }
-| "%type" midrule({ current_class := PCT_TYP_SYM }) syms=symbol_decls { syms }
+| percent_symbol syms=token_decls { syms }
 | precedence_declarator syms=token_decls_for_prec { syms }
 ;
+
+percent_symbol:
+| "%nterm"  { current_class := NTERM_SYM $loc }
+| "%token"  { current_class := TOKEN_SYM $loc }
+| "%type"   { current_class := PCT_TYP_SYM $loc }
 
 precedence_declarator:
 | "%left"       { current_prec := LEFT_PREC }
@@ -274,12 +286,12 @@ precedence_declarator:
 
 string_opt:
 | { None }
-| STRING { Some ($1, $loc) }
+| STRING { Some $1 }
 ;
 
 tag_opt:
 | { None }
-| TAG { Some (TagName ($1, $loc)) }
+| TAG { Some (TagName ($1)) }
 ;
 
 generic_symlist:
@@ -293,7 +305,7 @@ generic_symlist_item:
 ;
 
 tag:
-| TAG { TagName ($1, $loc) }
+| TAG { TagName ($1) }
 | "<*>" { TagAny }
 | "<>" { TagNone }
 
@@ -305,9 +317,9 @@ nterm_decls:
 (* token_decls (%token, and %nterm). *)
 token_decls:
 | syms=token_decl_1 { syms }
-| t=TAG; syms=token_decl_1 { tagging (TagName (t, $loc(t))) syms }
+| t=TAG; syms=token_decl_1 { tagging (TagName t) syms }
 | tds1=token_decls; t=TAG; tds2=token_decl_1 {
-    tds1 @ (tagging (TagName (t, $loc(t))) tds2)
+    tds1 @ (tagging (TagName t) tds2)
 }
 ;
 
@@ -322,8 +334,8 @@ token_decl_1:
 token_decl:
 | id=id; number=int_opt; alias=alias {
     match !current_class with
-    | NTERM_SYM -> PercentNterm{ tag = None; id; pos = $loc }
-    | TOKEN_SYM -> PercentToken{ tag = None; id; number; alias; pos = $loc }
+    | NTERM_SYM pos -> PercentNterm{ tag = None; id; pos }
+    | TOKEN_SYM pos -> PercentToken{ tag = None; id; number; alias; pos }
     | _ -> raise (SyntaxError "invalid type")
 }
 ;
@@ -336,15 +348,15 @@ int_opt:
 alias:
 | { None }
 | string_as_id { Some $1 }
-| TSTRING { Some ($1, $loc) }
+| TSTRING { Some $1 }
 ;
 
 (* token_decls_for_prec (%left, etc.). *)
 token_decls_for_prec:
 | syms=token_decl_for_prec_1 { syms }
-| t=TAG; syms=token_decl_for_prec_1 { tagging (TagName (t, $loc(t))) syms }
+| t=TAG; syms=token_decl_for_prec_1 { tagging (TagName t) syms }
 | tds1=token_decls_for_prec; t=TAG; tds2=token_decl_for_prec_1 {
-    tds1 @ (tagging (TagName (t, $loc(t))) tds2)
+    tds1 @ (tagging (TagName t) tds2)
 }
 ;
 
@@ -382,7 +394,7 @@ token_decl_for_prec:
 symbol_decls:
 | syms=symbols_1 { List.map (fun id -> PercentType{ tag = None; id; pos = $loc }) syms }
 | sds1=symbol_decls; t=TAG; sds2=symbols_1 {
-    sds1 @ (tagging (TagName (t, $loc(t))) (List.map (fun id -> PercentType{ tag = None; id; pos = $loc }) sds2))
+    sds1 @ (tagging (TagName t) (List.map (fun id -> PercentType{ tag = None; id; pos = $loc }) sds2))
 }
 ;
 
@@ -437,20 +449,20 @@ rhs:
 | { [] }
 | rhs; symbol=symbol; named_ref=named_ref_opt { $1 @ [ RhsSym{ symbol; named_ref } ] }
 | rhs; tag=tag_opt; code="{...}"; named_ref=named_ref_opt {
-    $1 @ [ RhsMidrule{tag; code = (code, $loc(code)); named_ref} ]
+    $1 @ [ RhsMidrule{tag; code; named_ref} ]
 }
-| rhs; "%?{...}" { $1 @ [ RhsPredicate ($2, $loc($2)) ] }
+| rhs; "%?{...}" { $1 @ [ RhsPredicate $2 ] }
 | rhs; "%empty" { $1 @ [ RhsPercentEmpty ($loc($2)) ] }
 | rhs; "%prec"; s=symbol { $1 @ [ RhsPercentPrec s ] }
 | rhs; "%dprec"; i=INT_LITERAL { $1 @ [ RhsPercentDprec (i, $loc(i)) ] }
-| rhs; "%merge"; t=TAG { $1 @ [ RhsPercentMerge (TagName (t, $loc(t))) ] }
+| rhs; "%merge"; t=TAG { $1 @ [ RhsPercentMerge (TagName t) ] }
 | rhs; "%expect"; i=INT_LITERAL { $1 @ [ RhsPercentExpect (i, $loc(i)) ] }
 | rhs; "%expect-rr"; i=INT_LITERAL { $1 @ [ RhsPercentExpectRR (i, $loc(i)) ] }
 ;
 
 named_ref_opt:
 | { None }
-| BRACKETED_ID { Some ($1, $loc) }
+| BRACKETED_ID { Some $1 }
 ;
 
 
@@ -464,8 +476,8 @@ variable:
 value:
 | { None }
 | ID { Some (ValID($1, $loc)) }
-| STRING { Some (ValString($1, $loc)) }
-| "{...}" { Some (ValCode($1, $loc)) }
+| STRING { Some (ValString($1)) }
+| "{...}" { Some (ValCode $1) }
 ;
 
 
@@ -473,7 +485,7 @@ value:
 
 id:
 | ID { ($1, $loc) }
-| CHAR_LITERAL { ($1, $loc) }
+| CHAR_LITERAL { (fst $1, snd $1) }
 ;
 
 (*
@@ -489,10 +501,10 @@ symbol:
 
 (* A string used as an ID. *)
 string_as_id:
-| STRING { ($1, $loc) }
+| STRING { $1 }
 ;
 
 epilogue_opt:
 | { None }
-| "%%"; e=EPILOGUE { Some (e, $loc) }
+| "%%"; e=EPILOGUE { Some e }
 ;

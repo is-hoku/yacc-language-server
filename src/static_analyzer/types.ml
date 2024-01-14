@@ -1,7 +1,20 @@
+type pos = Lexing.position * Lexing.position
+
+let pp_pos fmt (pos : Lexing.position * Lexing.position) =
+  let s = fst pos in
+  let e = snd pos in
+  Format.fprintf fmt
+    "({ line = %d; character = %d }, { line = %d; character = %d })" s.pos_lnum
+    (s.pos_cnum - s.pos_bol) e.pos_lnum (e.pos_cnum - e.pos_bol)
+
 type param_type = PARAM_NONE | PARAM_LEX | PARAM_PARSE | PARAM_BOTH
 [@@deriving show]
 
-type symbol_class = UNKNOWN_SYM | NTERM_SYM | TOKEN_SYM | PCT_TYP_SYM
+type symbol_class =
+  | UNKNOWN_SYM of pos
+  | NTERM_SYM of pos
+  | TOKEN_SYM of pos
+  | PCT_TYP_SYM of pos
 [@@deriving show]
 
 type prec_class =
@@ -11,15 +24,6 @@ type prec_class =
   | NONASSOC_PREC
   | PRECEDENCE_PREC
 [@@deriving show]
-
-type pos = Lexing.position * Lexing.position
-
-let pp_pos fmt (pos : Lexing.position * Lexing.position) =
-  let s = fst pos in
-  let e = snd pos in
-  Format.fprintf fmt
-    "({ line = %d; character = %d }, { line = %d; character = %d })" s.pos_lnum
-    (s.pos_cnum - s.pos_bol) e.pos_lnum (e.pos_cnum - e.pos_bol)
 
 exception SyntaxError of string
 
@@ -31,7 +35,7 @@ type t = {
 
 (* Declarations. *)
 and prologue_declaration =
-  | Prologue of { pos : pos; next : prologue_declaration option }
+  | Prologue of { code : string; pos : pos; next : prologue_declaration option }
   | PercentFlag of {
       flag : string;
       pos : pos;
