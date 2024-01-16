@@ -96,7 +96,6 @@ PERCENT_FILE_PREFIX     "%file-prefix"
 PERCENT_FLAG            "%<flag>"
 PERCENT_NAME_PREFIX     "%name-prefix"
 PERCENT_PURE_PARSER     "%pure-parser"
-PERCENT_INVALID         "%(invalid)"
 
 %token
 PERCENT_EXPECT          "%expect"
@@ -120,7 +119,6 @@ PERCENT_YACC            "%yacc"
 ID                "identifier"
 (*ID_COLON          "identifier:"*)
 PERCENT_FIXED_OUTPUT_FILES  "%fixed-output-files"
-GRAM_error        "(gram_error)"
 
 %token
 COLON             ":"
@@ -145,24 +143,19 @@ EPILOGUE          "epilogue"
 
 %type <Types.tag option> tag_opt
 %token <int> INT_LITERAL "integer literal"
-(*%type <symbol> id id_colon string_as_id symbol token_decl token_decl_for_prec*)
-(*%type <assoc> precedence_declarator*)
-(*%type <named_ref> named_ref_opt*)
 
 (* %param. *)
 %token <Types.param_type> PERCENT_PARAM "%param"
 
 
 (* Grammar. *)
-(*%type <code_props_type> code_props_type;*)
 %token PERCENT_UNION "%union"
-(*%type <symbol_list> nterm_decls symbol_decls symbols_1 token_decls token_decls_for_prec token_decl_1 token_decl_for_prec_1;*)
 %type <(string * Types.pos) option> string_opt
-(*%type <symbol_list> generic_symlist generic_symlist_item;*)
 %type <(int * Types.pos)  option> int_opt
-(*%type <symbol> alias;*)
 %token PERCENT_EMPTY "%empty"
-(*%type <value_type> value;*)
+
+(* Error (ignored token) *)
+%token <string * Types.pos> ERROR
 
 %type <Types.t> input
 %start input
@@ -230,8 +223,6 @@ prologue_declaration:
 | "%token-table" { PercentTokenTable{ pos = $loc; next = None } }
 | "%verbose" { PercentVerbose{ pos = $loc; next = None } }
 | "%yacc" { PercentYacc{ pos = $loc; next = None } }
-| "%(invalid)" { Error{ msg = (Printf.sprintf "invalid directive %s" $1); pos = $loc; next = None }}
-| msg=error; ";" { Error{ msg; pos = $loc; next = None} }
 ;
 
 params:
@@ -426,14 +417,12 @@ rules_or_grammar_declaration:
     )
     | _ -> GrammarDecl{ directive = $1; next = None }
 }
-| error ";" { raise (SyntaxError error)}
 ;
 
 rules:
 (*| id=id_colon; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
     Rule{ id; named_ref; rhs; pos=$loc; next=None }
-}
-*)
+}*)
 | id=id; named_ref=named_ref_opt; ":"; rhs=rhses_1 {
     Rule{ id; named_ref; rhs; pos=$loc; next=None }
 }

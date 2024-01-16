@@ -1,11 +1,12 @@
 (menhir
- (modules syntax))
+ (modules syntax)
+ (flags --table --inspection))
 
 (library
  (name static_analyzer)
  (public_name language_server.static_analyzer)
  (preprocess (pps ppx_deriving.show))
- (libraries language_server))
+ (libraries language_server menhirLib))
 
 (rule
  (target lexer.ml)

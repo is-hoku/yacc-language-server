@@ -1,13 +1,16 @@
 open Static_analyzer
 
-let parse buf = Syntax.input Lexer.read_token buf |> Types.show |> print_endline
+let _parse buf =
+  Syntax.input Lexer.read_token buf |> Types.show |> print_endline
 
 let test dir =
   Array.iter
     (fun file ->
-      let fin = open_in (Filename.concat dir file) in
+      let fname = Filename.concat dir file in
+      print_endline (Printf.sprintf "test file: %s" fname);
+      let fin = open_in fname in
       let buf = Lexing.from_channel fin in
-      parse buf;
+      Parser.process fname buf |> Types.show |> print_string;
       close_in fin)
     (Sys.readdir dir)
 

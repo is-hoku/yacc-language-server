@@ -178,7 +178,12 @@ rule initial = parse
   | "%output" eqopt                         { deprecated_directive ("%output") lexbuf; PERCENT_OUTPUT }
   | "%token" ['-' '_'] "table"              { deprecated_directive ("%token-table") lexbuf; PERCENT_TOKEN_TABLE }
 
-  | "%" id                                  { complain (Printf.sprintf "invalid directive: %s" (lexeme lexbuf)) lexbuf; PERCENT_INVALID (lexeme lexbuf) }
+  | "%" id                                  {
+      complain (Printf.sprintf "invalid directive: %s" (lexeme lexbuf)) lexbuf;
+      let msg = Printf.sprintf "invalid directive: %s" (lexeme lexbuf) in
+      let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+      ERROR (msg, pos)
+  }
 
   | ':'     { COLON }
   | '='     { EQUAL }
@@ -192,7 +197,9 @@ rule initial = parse
      accept "1FOO" as "1 FOO".  *)
   | int id  {
       complain (Printf.sprintf "invalid identifier: %s" (lexeme lexbuf)) lexbuf ;
-      GRAM_error (Printf.sprintf "invalid identifier: %s" (lexeme lexbuf))
+      let msg = Printf.sprintf "invalid identifier: %s" (lexeme lexbuf) in
+      let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+      ERROR (msg, pos)
   }
 
   (* Characters. *)
@@ -241,7 +248,9 @@ rule initial = parse
 
   | [^ '\\' '[' 'A'-'Z' 'a'-'z' '0'-'9' '_' '<' '>' '{' '}' '"' '\'' '*' ';' '|' '=' '/' ',' '\r' '\n' '\t' '\011' '\012' ' ']+ {
       complain (Printf.sprintf "262:invalid character %s" (lexeme lexbuf)) lexbuf;
-      GRAM_error (Printf.sprintf "invalid character %s" (lexeme lexbuf))
+      let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
+      let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+      ERROR (msg, pos)
   }
 
   (* Comments and white space. *)
@@ -255,7 +264,9 @@ rule initial = parse
   | eof { EOF }
   | _ {
       complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
-      GRAM_error (Printf.sprintf "invalid character %s" (lexeme lexbuf))
+      let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
+      let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+      ERROR (msg, pos)
   }
 
 (* This implementation does not support \0. *)
@@ -265,7 +276,9 @@ and sc_bracketed_id = parse
       match !bracketed_id_str with
       | Some _ ->
               complain (Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf)) lexbuf;
-              GRAM_error (Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf))
+              let msg = Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf) in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
       | None ->
               bracketed_id_str := Some (lexeme lexbuf);
               sc_bracketed_id lexbuf
@@ -282,15 +295,30 @@ and sc_bracketed_id = parse
                   BRACKETED_ID (s, (startpos, (lexeme_end_p lexbuf)))
       | None ->
               complain "identifiers expected" lexbuf;
-              GRAM_error "identifier expected"
+              let msg = "identifier expected" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | [^ ']' '.' 'A'-'Z' 'a'-'z' '0'-'9' '_' '/' ' ' '\t' '\r' '\n' '\011' '\012']+   {
       complain "invalid characters in bracketed name" lexbuf;
-      GRAM_error "invalid characters in bracketed name"
+      let msg = "invalid characters in bracketed name" in
+      let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+      ERROR (msg, pos)
   }
   | eof     {
+  let token =
+      let startpos =
+          match !state with
+          | SC_BRACKETED_ID pos -> pos
+          | _ -> dummy_pos in
+      match !bracketed_id_str with
+      | Some s ->
+              bracketed_id_str := None;
+              BRACKETED_ID (s, (startpos, (lexeme_end_p lexbuf)))
+      | None ->
+              BRACKETED_ID("?", (startpos, (lexeme_end_p lexbuf))) in
       unexpected_eof "]" lexbuf;
-      EOF
+      token
   }
 
   (* Comments and white space. *)
@@ -302,7 +330,9 @@ and sc_bracketed_id = parse
   | eol { new_line lexbuf; sc_bracketed_id lexbuf }
   | _ {
       complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
-      GRAM_error (Printf.sprintf "invalid character %s" (lexeme lexbuf))
+      let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
+      let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+      ERROR (msg, pos)
   }
 
 and sc_yacc_comment = parse
@@ -396,7 +426,14 @@ and sc_escaped_string = parse
   }
   | eof     {
       unexpected_eof "\"" lexbuf;
-      EOF
+      string_1grow '"';
+      let last_string = string_finish () in
+      let startpos =
+          match !state with
+          | SC_ESCAPED_STRING pos -> pos
+          | _ -> dummy_pos in
+      begin_ INITIAL;
+      STRING(last_string, (startpos, lexeme_end_p lexbuf))
   }
   | (mbchar | char) {
       string_grow (lexeme lexbuf);
@@ -479,7 +516,14 @@ and sc_escaped_tstring = parse
   }
   | eof     {
       unexpected_eof "\")" lexbuf;
-      EOF
+      string_1grow '"';
+      let last_string = string_finish () in
+      let startpos =
+          match !state with
+          | SC_ESCAPED_TSTRING pos -> pos
+          | _ -> dummy_pos in
+      begin_ INITIAL;
+      TSTRING(last_string, (startpos, lexeme_end_p lexbuf))
   }
   | (mbchar | char) {
       string_grow (lexeme lexbuf);
@@ -555,7 +599,9 @@ and sc_escaped_character = parse
       begin_ INITIAL;
       if (String.length last_string) != 1 then (
           complain "extra characters in character literal" lexbuf;
-          GRAM_error "extra characters in character literal"
+          let msg = "extra characters in character literal" in
+          let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+          ERROR (msg, pos)
       ) else
           CHAR_LITERAL(last_string, (startpos, lexeme_end_p lexbuf))
   }
@@ -573,7 +619,9 @@ and sc_escaped_character = parse
       let token =
       if (String.length last_string) != 1 then (
           complain "extra characters in character literal" lexbuf;
-          GRAM_error "extra characters in character literal"
+          let msg = "extra characters in character literal" in
+          let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+          ERROR (msg, pos)
       ) else
           CHAR_LITERAL(last_string, (startpos, lexeme_end_p lexbuf)) in
       unexpected_eof "'" lexbuf;
@@ -957,7 +1005,13 @@ and sc_prologue = parse
   }
   | eof {
       unexpected_eof "%}" lexbuf;
-      EOF
+      let last_string = string_finish () in
+      let startpos =
+          match !state with
+          | SC_PROLOGUE pos -> pos
+          | _ -> dummy_pos in
+      begin_ INITIAL;
+      PROLOGUE(last_string, (startpos, (lexeme_end_p lexbuf)))
   }
   | '\''    {
       string_grow (lexeme lexbuf);

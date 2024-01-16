@@ -12,4 +12,4 @@
 %}
 
 %token NUMBER
-%token <int
+%invalid INT

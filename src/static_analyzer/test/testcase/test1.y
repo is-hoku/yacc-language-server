@@ -12,7 +12,7 @@
 %}
 
 %token NUMBER
-%token <int> PLUS MINUS MULTIPLY DIVIDE
+%token PLUS MINUS MULTIPLY DIVIDE
 %token LPAREN RPAREN
 
 %%
