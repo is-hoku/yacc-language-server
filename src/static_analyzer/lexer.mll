@@ -247,7 +247,7 @@ rule initial = parse
   }
 
   | [^ '\\' '[' 'A'-'Z' 'a'-'z' '0'-'9' '_' '<' '>' '{' '}' '"' '\'' '*' ';' '|' '=' '/' ',' '\r' '\n' '\t' '\011' '\012' ' ']+ {
-      complain (Printf.sprintf "262:invalid character %s" (lexeme lexbuf)) lexbuf;
+      complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
       let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
       ERROR (msg, pos)
@@ -720,7 +720,18 @@ and sc_tag = parse
 
   | eof                     {
       unexpected_eof ">" lexbuf;
-      EOF
+      decr nesting;
+      if !nesting < 0 then
+          let last_string = string_finish () in
+          let startpos =
+            match !state with
+            | SC_TAG pos -> pos
+            | _ -> dummy_pos in
+          begin_ INITIAL;
+          TAG(last_string, (startpos, lexeme_end_p lexbuf))
+      else(
+          EOF
+      )
   }
 
 and sc_character = parse

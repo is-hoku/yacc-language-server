@@ -12,4 +12,11 @@
 %}
 
 %token NUMBER
-%
+%token PLUS MINUS MULTIPLY DIVIDE
+%token LPAREN RPAREN
+
+%%
+/* 文法規則の定義 */
+expr:
+    expr PLUS term   { $$ = $1 + $3; }
+    | expr MINUS term  { $$ =
