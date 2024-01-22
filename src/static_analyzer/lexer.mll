@@ -4,8 +4,6 @@ open Syntax
 open Types
 open Language_server.Import
 
-exception LexError of string
-
 let pp_position fmt p =
   Format.fprintf fmt
     "{ line = %d; character = %d }" p.pos_lnum (p.pos_cnum - p.pos_bol)
@@ -40,10 +38,12 @@ let begin_ new_state =
 
 let buf = Buffer.create 256
 
-let complain msg lexbuf =
-    let pos = lexeme_start_p lexbuf in
-    (* TODO: push errors to a queue for later reporting *)
-    print_endline (Printf.sprintf "%s, line %d, character %d" msg pos.pos_lnum (pos.pos_cnum - pos.pos_bol))
+let get_range lexbuf =
+    let start_p = lexeme_start_p lexbuf in
+    let end_p = lexeme_end_p lexbuf in
+    let start = Position.create ~character:(start_p.pos_cnum - start_p.pos_bol) ~line:start_p.pos_lnum in
+    let end_ = Position.create ~character:(end_p.pos_cnum - end_p.pos_bol) ~line:end_p.pos_lnum in
+    Range.create ~end_ ~start
 
 let string_grow str =
   Buffer.add_string buf str
@@ -58,8 +58,11 @@ let string_1grow char_ =
 
 let string_grow_escape c lexbuf =
     let valid = (0 < c && c <= 255) in
-    if not valid then
-        complain (Printf.sprintf "invalid number after \\-escape: %s" (lexeme lexbuf)) lexbuf;
+    (if not valid then
+        let message = Printf.sprintf "invalid number after \\-escape: %s" (lexeme lexbuf) in
+        let range = get_range lexbuf in
+        append_diagnostics (Diagnostic.create ~message ~range ()) 
+    );
     match !state with
     | SC_ESCAPED_CHARACTER _ -> (
         if valid then
@@ -68,23 +71,21 @@ let string_grow_escape c lexbuf =
             string_1grow ('?'))
     | _ -> string_grow (lexeme lexbuf)
 
-
-let get_range lexbuf =
-    let start_p = lexeme_start_p lexbuf in
-    let end_p = lexeme_end_p lexbuf in
-    let start = Position.create ~character:(start_p.pos_cnum - start_p.pos_bol) ~line:start_p.pos_lnum in
-    let end_ = Position.create ~character:(end_p.pos_cnum - end_p.pos_bol) ~line:end_p.pos_lnum in
-    Range.create ~end_ ~start
-
 let unexpected_eof c lexbuf =
-    complain (Printf.sprintf "missing %s at end of file" c) lexbuf
+    let message = Printf.sprintf "missing %s at end of file" c in
+    let range = get_range lexbuf in
+    append_diagnostics (Diagnostic.create ~message ~range ())
 
 let unexpected_newline c lexbuf =
-    complain (Printf.sprintf "missing %s at end of line" c) lexbuf;
+    let message = Printf.sprintf "missing %s at end of line" c in
+    let range = get_range lexbuf in
+    append_diagnostics (Diagnostic.create ~message ~range ());
     new_line lexbuf
 
 let deprecated_directive d lexbuf =
-    complain (Printf.sprintf "deprecated directive: %s" d) lexbuf
+    let message = Printf.sprintf "deprecated directive: %s" d in
+    let range = get_range lexbuf in
+    append_diagnostics (Diagnostic.create ~message ~range ())
 }
 
 let letter = ['.' 'a'-'z' 'A'-'Z' '_']
@@ -179,10 +180,11 @@ rule initial = parse
   | "%token" ['-' '_'] "table"              { deprecated_directive ("%token-table") lexbuf; PERCENT_TOKEN_TABLE }
 
   | "%" id                                  {
-      complain (Printf.sprintf "invalid directive: %s" (lexeme lexbuf)) lexbuf;
-      let msg = Printf.sprintf "invalid directive: %s" (lexeme lexbuf) in
+      let message = Printf.sprintf "invalid directive: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-      ERROR (msg, pos)
+      append_diagnostics (Diagnostic.create ~message ~range ());
+      ERROR (message, pos)
   }
 
   | ':'     { COLON }
@@ -196,10 +198,11 @@ rule initial = parse
   (* Identifiers may not start with a digit.  Yet, don't silently
      accept "1FOO" as "1 FOO".  *)
   | int id  {
-      complain (Printf.sprintf "invalid identifier: %s" (lexeme lexbuf)) lexbuf ;
-      let msg = Printf.sprintf "invalid identifier: %s" (lexeme lexbuf) in
+      let message = Printf.sprintf "invalid identifier: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-      ERROR (msg, pos)
+      append_diagnostics (Diagnostic.create ~message ~range ());
+      ERROR (message, pos)
   }
 
   (* Characters. *)
@@ -247,14 +250,20 @@ rule initial = parse
   }
 
   | [^ '\\' '[' 'A'-'Z' 'a'-'z' '0'-'9' '_' '<' '>' '{' '}' '"' '\'' '*' ';' '|' '=' '/' ',' '\r' '\n' '\t' '\011' '\012' ' ']+ {
-      complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
-      let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
+      let message = Printf.sprintf "invalid character: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-      ERROR (msg, pos)
+      append_diagnostics (Diagnostic.create ~message ~range ());
+      ERROR (message, pos)
   }
 
   (* Comments and white space. *)
-  | ',' { complain "stray ',' treated as white space" lexbuf; initial lexbuf }
+  | ','  {
+    let message = "stray ',' treated as white space" in
+    let range = get_range lexbuf in
+    append_diagnostics (Diagnostic.create ~message ~range ~severity:DiagnosticSeverity.Warning ());
+    initial lexbuf
+  }
   | "//" [^ '\n' '\r']* eol { new_line lexbuf; initial lexbuf }
   | "/*" { context_state := !state; begin_ SC_YACC_COMMENT; sc_yacc_comment lexbuf }
   | "#line " int (" \"" [^ '"']* '"')? eol { new_line lexbuf; initial lexbuf }
@@ -263,10 +272,11 @@ rule initial = parse
       new_line lexbuf; initial lexbuf }
   | eof { EOF }
   | _ {
-      complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
-      let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
+      let message = Printf.sprintf "invalid character: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-      ERROR (msg, pos)
+      append_diagnostics (Diagnostic.create ~message ~range ());
+      ERROR (message, pos)
   }
 
 (* This implementation does not support \0. *)
@@ -275,10 +285,11 @@ and sc_bracketed_id = parse
   | id      {
       match !bracketed_id_str with
       | Some _ ->
-              complain (Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf)) lexbuf;
-              let msg = Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf) in
+              let message = Printf.sprintf "unexpected identifier in bracketed name: %s" (lexeme lexbuf) in
+              let range = get_range lexbuf in
               let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-              ERROR (msg, pos)
+              append_diagnostics (Diagnostic.create ~message ~range ());
+              ERROR (message, pos)
       | None ->
               bracketed_id_str := Some (lexeme lexbuf);
               sc_bracketed_id lexbuf
@@ -294,16 +305,18 @@ and sc_bracketed_id = parse
                       | _ -> dummy_pos in
                   BRACKETED_ID (s, (startpos, (lexeme_end_p lexbuf)))
       | None ->
-              complain "identifiers expected" lexbuf;
-              let msg = "identifier expected" in
+              let message = "identifiers expected" in
+              let range = get_range lexbuf in
               let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-              ERROR (msg, pos)
+              append_diagnostics (Diagnostic.create ~message ~range ());
+              ERROR (message, pos)
   }
   | [^ ']' '.' 'A'-'Z' 'a'-'z' '0'-'9' '_' '/' ' ' '\t' '\r' '\n' '\011' '\012']+   {
-      complain "invalid characters in bracketed name" lexbuf;
-      let msg = "invalid characters in bracketed name" in
+      let message = "invalid characters in bracketed name" in
+      let range = get_range lexbuf in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-      ERROR (msg, pos)
+      append_diagnostics (Diagnostic.create ~message ~range ());
+      ERROR (message, pos)
   }
   | eof     {
   let token =
@@ -322,17 +335,23 @@ and sc_bracketed_id = parse
   }
 
   (* Comments and white space. *)
-  | ',' { complain "stray ',' treated as white space" lexbuf; sc_bracketed_id lexbuf }
+  | ',' {
+    let message = "stray ',' treated as white space" in
+    let range = get_range lexbuf in
+    append_diagnostics (Diagnostic.create ~message ~range ~severity:DiagnosticSeverity.Warning ());
+    initial lexbuf
+  }
   | "//" [^ '\n' '\r']* eol { new_line lexbuf; sc_bracketed_id lexbuf }
   | "/*" { context_state := !state; begin_ SC_YACC_COMMENT; sc_yacc_comment lexbuf }
   | "#line " int (" \"" [^ '"']* '"')? eol { new_line lexbuf; sc_bracketed_id lexbuf }
   | sp  { sc_bracketed_id lexbuf }
   | eol { new_line lexbuf; sc_bracketed_id lexbuf }
   | _ {
-      complain (Printf.sprintf "invalid character %s" (lexeme lexbuf)) lexbuf;
-      let msg = Printf.sprintf "invalid character %s" (lexeme lexbuf) in
+      let message = Printf.sprintf "invalid character: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
       let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-      ERROR (msg, pos)
+      append_diagnostics (Diagnostic.create ~message ~range ());
+      ERROR (message, pos)
   }
 
 and sc_yacc_comment = parse
@@ -341,7 +360,10 @@ and sc_yacc_comment = parse
       match !context_state with
       | INITIAL -> initial lexbuf
       | SC_BRACKETED_ID _ -> sc_bracketed_id lexbuf
-      | _ -> raise (LexError "invalid state")
+      | _ ->
+              let msg = "invalid state in SC_YACC_COMMENT" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eol             {
       new_line lexbuf;
@@ -363,7 +385,10 @@ and sc_comment = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_COMMENT" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | '*' '/'         {
       string_grow (lexeme lexbuf);
@@ -373,7 +398,10 @@ and sc_comment = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_COMMENT" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eol             {
       new_line lexbuf;
@@ -394,7 +422,10 @@ and sc_line_comment = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_LINE_COMMENT" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | splice          {
       new_line lexbuf;
@@ -403,7 +434,10 @@ and sc_line_comment = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_LINE_COMMENT" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eof             { EOF }
   | _               { sc_line_comment lexbuf }
@@ -417,7 +451,9 @@ and sc_escaped_string = parse
           | SC_ESCAPED_STRING pos -> pos
           | _ -> dummy_pos in
       begin_ INITIAL;
-      complain "POSIX Yacc does not support string literals" lexbuf;
+      let message = "POSIX Yacc does not support string literals" in
+      let range = get_range lexbuf in
+      append_diagnostics (Diagnostic.create ~message ~range ());
       STRING(last_string, (startpos, lexeme_end_p lexbuf))
   }
   | eol     {
@@ -486,7 +522,9 @@ and sc_escaped_string = parse
   }
   *)
   | '\\' char {
-      complain (Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf)) lexbuf;
+      let message = Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
+      append_diagnostics (Diagnostic.create ~message ~range ());
       string_1grow '?';
       sc_escaped_string lexbuf
   }
@@ -508,7 +546,9 @@ and sc_escaped_tstring = parse
           | SC_ESCAPED_TSTRING pos -> pos
           | _ -> dummy_pos in
       begin_ INITIAL;
-      complain "POSIX Yacc does not support string literals" lexbuf;
+      let message = "POSIX Yacc does not support string literals" in
+      let range = get_range lexbuf in
+      append_diagnostics (Diagnostic.create ~message ~range ());
       TSTRING(last_string, (startpos, lexeme_end_p lexbuf))
   }| eol     {
       unexpected_newline "\")" lexbuf;
@@ -576,7 +616,9 @@ and sc_escaped_tstring = parse
   }
   *)
   | '\\' char {
-      complain (Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf)) lexbuf;
+      let message = Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
+      append_diagnostics (Diagnostic.create ~message ~range ());
       string_1grow '?';
       sc_escaped_tstring lexbuf
   }
@@ -598,10 +640,11 @@ and sc_escaped_character = parse
           | _ -> dummy_pos in
       begin_ INITIAL;
       if (String.length last_string) != 1 then (
-          complain "extra characters in character literal" lexbuf;
-          let msg = "extra characters in character literal" in
+          let message = "extra characters in character literal" in
+          let range = get_range lexbuf in
           let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-          ERROR (msg, pos)
+          append_diagnostics (Diagnostic.create ~message ~range ());
+          ERROR (message, pos)
       ) else
           CHAR_LITERAL(last_string, (startpos, lexeme_end_p lexbuf))
   }
@@ -618,10 +661,11 @@ and sc_escaped_character = parse
       begin_ INITIAL;
       let token =
       if (String.length last_string) != 1 then (
-          complain "extra characters in character literal" lexbuf;
-          let msg = "extra characters in character literal" in
+          let message = "extra characters in character literal" in
+          let range = get_range lexbuf in
           let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
-          ERROR (msg, pos)
+          append_diagnostics (Diagnostic.create ~message ~range ());
+          ERROR (message, pos)
       ) else
           CHAR_LITERAL(last_string, (startpos, lexeme_end_p lexbuf)) in
       unexpected_eof "'" lexbuf;
@@ -678,7 +722,9 @@ and sc_escaped_character = parse
   }
   *)
   | '\\' char {
-      complain (Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf)) lexbuf;
+      let message = Printf.sprintf "invalid character after \\-escape: %s" (lexeme lexbuf) in
+      let range = get_range lexbuf in
+      append_diagnostics (Diagnostic.create ~message ~range ());
       string_1grow '?';
       sc_escaped_character lexbuf
   }
@@ -743,7 +789,10 @@ and sc_character = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_CHARACTER" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eol             {
       unexpected_newline "'" lexbuf;
@@ -752,7 +801,10 @@ and sc_character = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_CHARACTER" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eof             {
       unexpected_eof "'" lexbuf;
@@ -777,7 +829,10 @@ and sc_string = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_STRING" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eol             {
       unexpected_newline "\"" lexbuf;
@@ -786,7 +841,10 @@ and sc_string = parse
       | SC_PROLOGUE _ -> sc_prologue lexbuf
       | SC_EPILOGUE _ -> sc_epilogue lexbuf
       | SC_PREDICATE _ -> sc_predicate lexbuf
-      | _ -> raise (LexError "invalid token")
+      | _ ->
+              let msg = "invalid state in SC_STRING" in
+              let pos = (lexeme_start_p lexbuf, lexeme_end_p lexbuf) in
+              ERROR (msg, pos)
   }
   | eof             {
       unexpected_eof "\"" lexbuf;

@@ -11,7 +11,8 @@ module Make (Repo : Input) : Output = struct
     ServerCapabilities.create
       ~textDocumentSync:
         (`TextDocumentSyncOptions
-          (TextDocumentSyncOptions.create ~openClose:true ~change:Incremental ()))
+          (TextDocumentSyncOptions.create ~openClose:true ~change:Incremental
+             ~save:(`Bool true) ()))
       ~completionProvider:
         (CompletionOptions.create
            ~triggerCharacters:[ "i" ] (* set " " as triggerCharacters *)

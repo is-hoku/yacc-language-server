@@ -40,6 +40,30 @@ module DidChange = struct
     | _ -> Lwt.return_error { message = "not found"; uri = doc.uri }
 end
 
+module DidSave = struct
+  type input = { uri : DocumentUri.t }
+  type error = { message : string; uri : DocumentUri.t }
+  type output = (PublishDiagnosticsParams.t, error) Result.t Lwt.t
+
+  let exec (doc : input) =
+    match DocumentUri.to_string doc.uri with
+    | "file:///controller/mock/example.y" ->
+        Lwt.return_ok
+          (PublishDiagnosticsParams.create
+             ~diagnostics:
+               [
+                 Diagnostic.create ~message:"invalid character: %"
+                   ~range:
+                     (Range.create
+                        ~end_:(Position.create ~character:0 ~line:1)
+                        ~start:(Position.create ~character:0 ~line:1))
+                   ();
+               ]
+             ~uri:(Uri.of_path "file://controller/mock/example.y")
+             ~version:1 ())
+    | _ -> Lwt.return_error { message = "not found"; uri = doc.uri }
+end
+
 module Completion = struct
   type input = { uri : DocumentUri.t; pos : Position.t }
   type error = { message : string; uri : DocumentUri.t }

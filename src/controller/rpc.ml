@@ -208,7 +208,6 @@ module Make (UC : Input) : Output = struct
             Logs.info (fun m -> m "textDocument/didOpen");
             match (params, is_initialized) with
             | Some p, Some _ -> (
-                Logs.info (fun m -> m "textDocument/didOpen");
                 let params =
                   DidOpenTextDocumentParams.t_of_yojson
                     (Jsonrpc.Structured.yojson_of_t p)
@@ -251,6 +250,48 @@ module Make (UC : Input) : Output = struct
                 in
                 match result with
                 | Result.Ok _ -> Lwt.return (None, s)
+                | Result.Error err ->
+                    Lwt.return
+                      ( Some
+                          (show_message_notification MessageType.Log
+                             (Printf.sprintf "%s: %s" (Uri.to_string err.uri)
+                                err.message)),
+                        s ))
+            | _, None ->
+                Lwt.return
+                  ( Some
+                      (show_message_notification MessageType.Log "uninitialized"),
+                    s )
+            | None, _ ->
+                Lwt.return
+                  ( Some
+                      (show_message_notification MessageType.Log
+                         "parameters are not found"),
+                    s ))
+        | "textDocument/didSave" -> (
+            Logs.info (fun m -> m "textDocument/didSave");
+            match (params, is_initialized) with
+            | Some p, Some _ -> (
+                let params =
+                  DidSaveTextDocumentParams.t_of_yojson
+                    (Jsonrpc.Structured.yojson_of_t p)
+                in
+                let* result =
+                  UC.DidSave.exec { uri = params.textDocument.uri }
+                in
+                match result with
+                | Result.Ok diagnostics ->
+                    Lwt.return
+                      ( Some
+                          (Jsonrpc.Packet.t_of_yojson
+                             (Jsonrpc.Notification.yojson_of_t
+                                (Jsonrpc.Notification.create
+                                   ~params:
+                                     (Jsonrpc.Structured.t_of_yojson
+                                        (PublishDiagnosticsParams.yojson_of_t
+                                           diagnostics))
+                                   ~method_:"textDocument/publishDiagnostics" ()))),
+                        s )
                 | Result.Error err ->
                     Lwt.return
                       ( Some

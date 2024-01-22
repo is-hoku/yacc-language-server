@@ -3,4 +3,4 @@
  (public_name language_server.interactor)
  (inline_tests)
  (preprocess (pps ppx_inline_test))
- (libraries language_server usecase repository logs))
+ (libraries language_server usecase repository static_analyzer logs))

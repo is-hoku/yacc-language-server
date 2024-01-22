@@ -1,4 +1,6 @@
 open Lexing
+open Types
+open Language_server.Import
 
 exception RecoveryError of string * (position * position)
 
@@ -66,24 +68,24 @@ module Printer = struct
         | T T_BRACKETED_ID -> fst v
         | T T_EPILOGUE -> fst v
         | T T_INT_LITERAL -> string_of_int v
-        | T T_PERCENT_PARAM -> Types.show_param_type v
+        | T T_PERCENT_PARAM -> show_param_type v
         | T T_PERCENT_UNION -> "%union"
         | T T_PERCENT_EMPTY -> "%empty"
         | T T_error -> "error"
         | T T_ERROR -> fst v
-        | N N_input -> Types.show v
+        | N N_input -> show v
         | N N_prologue_declarations ->
-            String.concat ", " (List.map Types.show_prologue_declaration v)
-        | N N_prologue_declaration -> Types.show_prologue_declaration v
-        | N N_params -> String.concat ", " (List.map Types.show_string_ v)
-        | N N_grammar_declaration -> Types.show_grammar_declaration v
-        | N N_code_props_type -> Types.show_grammar_declaration v
+            String.concat ", " (List.map show_prologue_declaration v)
+        | N N_prologue_declaration -> show_prologue_declaration v
+        | N N_params -> String.concat ", " (List.map show_string_ v)
+        | N N_grammar_declaration -> show_grammar_declaration v
+        | N N_code_props_type -> show_grammar_declaration v
         | N N_union_name -> (
             match v with
-            | Some s -> Printf.sprintf "Some (%s)" (Types.show_string_ s)
+            | Some s -> Printf.sprintf "Some (%s)" (show_string_ s)
             | None -> "None")
         | N N_symbol_declaration ->
-            String.concat ", " (List.map Types.show_grammar_declaration v)
+            String.concat ", " (List.map show_grammar_declaration v)
         | N N_percent_symbol -> "(percent_symbol)"
         | N N_precedence_declarator -> "(precedence_declarator)"
         | N N_string_opt -> (
@@ -92,51 +94,50 @@ module Printer = struct
             | None -> "None")
         | N N_tag_opt -> (
             match v with
-            | Some tag -> Printf.sprintf "Some (%s)" (Types.show_tag tag)
+            | Some tag -> Printf.sprintf "Some (%s)" (show_tag tag)
             | None -> "None")
-        | N N_generic_symlist ->
-            String.concat ", " (List.map Types.show_symbol_tag v)
-        | N N_generic_symlist_item -> Types.show_symbol_tag v
-        | N N_tag -> Types.show_tag v
+        | N N_generic_symlist -> String.concat ", " (List.map show_symbol_tag v)
+        | N N_generic_symlist_item -> show_symbol_tag v
+        | N N_tag -> show_tag v
         | N N_token_decls ->
-            String.concat ", " (List.map Types.show_grammar_declaration v)
+            String.concat ", " (List.map show_grammar_declaration v)
         | N N_token_decl_1 ->
-            String.concat ", " (List.map Types.show_grammar_declaration v)
-        | N N_token_decl -> Types.show_grammar_declaration v
+            String.concat ", " (List.map show_grammar_declaration v)
+        | N N_token_decl -> show_grammar_declaration v
         | N N_int_opt -> (
             match v with
             | Some i -> Printf.sprintf "Some (%d)" (fst i)
             | None -> "None")
         | N N_alias -> (
             match v with
-            | Some s -> Printf.sprintf "Some (%s)" (Types.show_string_ s)
+            | Some s -> Printf.sprintf "Some (%s)" (show_string_ s)
             | None -> "None")
         | N N_token_decls_for_prec ->
-            String.concat ", " (List.map Types.show_grammar_declaration v)
+            String.concat ", " (List.map show_grammar_declaration v)
         | N N_token_decl_for_prec_1 ->
-            String.concat ", " (List.map Types.show_grammar_declaration v)
-        | N N_token_decl_for_prec -> Types.show_grammar_declaration v
-        | N N_symbols_1 -> String.concat ", " (List.map Types.show_symbol v)
-        | N N_grammar -> String.concat ", " (List.map Types.show_grammar v)
-        | N N_rules_or_grammar_declaration -> Types.show_grammar v
-        | N N_rules -> Types.show_grammar v
-        | N N_rhses_1 -> String.concat ", " (List.map Types.show_rhs v)
-        | N N_rhs -> String.concat ", " (List.map Types.show_rhs v)
+            String.concat ", " (List.map show_grammar_declaration v)
+        | N N_token_decl_for_prec -> show_grammar_declaration v
+        | N N_symbols_1 -> String.concat ", " (List.map show_symbol v)
+        | N N_grammar -> String.concat ", " (List.map show_grammar v)
+        | N N_rules_or_grammar_declaration -> show_grammar v
+        | N N_rules -> show_grammar v
+        | N N_rhses_1 -> String.concat ", " (List.map show_rhs v)
+        | N N_rhs -> String.concat ", " (List.map show_rhs v)
         | N N_named_ref_opt -> (
             match v with
-            | Some s -> Printf.sprintf "Some (%s)" (Types.show_string_ s)
+            | Some s -> Printf.sprintf "Some (%s)" (show_string_ s)
             | None -> "None")
-        | N N_variable -> Types.show_string_ v
+        | N N_variable -> show_string_ v
         | N N_value -> (
             match v with
-            | Some s -> Printf.sprintf "Some (%s)" (Types.show_value s)
+            | Some s -> Printf.sprintf "Some (%s)" (show_value s)
             | None -> "None")
-        | N N_id -> Types.show_string_ v
-        | N N_symbol -> Types.show_symbol v
-        | N N_string_as_id -> Types.show_string_ v
+        | N N_id -> show_string_ v
+        | N N_symbol -> show_symbol v
+        | N N_string_as_id -> show_string_ v
         | N N_epilogue_opt -> (
             match v with
-            | Some s -> Printf.sprintf "Some (%s)" (Types.show_string_ s)
+            | Some s -> Printf.sprintf "Some (%s)" (show_string_ s)
             | None -> "None"))
 
   let string_of_symbol = function
@@ -408,17 +409,34 @@ let feed_terminal terminal p1 p2 env =
   | X (T T_ERROR) -> feed (T T_ERROR) p1 ("", (p1, p2)) p2 env
   | X (N _) -> env
 
-let success ast = ast
+let get_range startpos endpos =
+  let start =
+    Position.create
+      ~character:(startpos.pos_cnum - startpos.pos_bol)
+      ~line:startpos.pos_lnum
+  in
+  let end_ =
+    Position.create
+      ~character:(endpos.pos_cnum - endpos.pos_bol)
+      ~line:endpos.pos_lnum
+  in
+  Range.create ~end_ ~start
 
-let rec fail supplier chkpt1 chkpt2 =
+let success ast = Result.ok ast
+
+let rec fail cnt supplier chkpt1 chkpt2 =
   match chkpt2 with
   | I.HandlingError env2 -> (
       let lposS, lposE = I.positions env2 in
       let pos = (lposS, lposE) in
       match I.top env2 with
-      | Some (I.Element (state2, _v, _startpos, _endpos)) -> (
+      | Some (I.Element (state2, _v, startpos, endpos)) -> (
           match supplier () with
           | Syntax.EOF, _, _ -> (
+              (if cnt = 0 then
+                 let message = "unexpected end of file" in
+                 let range = get_range startpos endpos in
+                 append_diagnostics (Diagnostic.create ~message ~range ()));
               (* production rules and index (terminal or nonterminal symbols) *)
               let items = I.items state2 in
               (* productions for reduce *)
@@ -434,8 +452,9 @@ let rec fail supplier chkpt1 chkpt2 =
               | hd :: _ ->
                   (* Reduce *)
                   let new_env = I.force_reduction hd env2 in
-                  I.loop_handle_undo success (fail supplier) supplier
-                    (I.input_needed new_env)
+                  I.loop_handle_undo success
+                    (fail (cnt + 1) supplier)
+                    supplier (I.input_needed new_env)
               | [] -> (
                   (* acceptable terminal symbols computed from the FIRST set *)
                   let symbols =
@@ -461,10 +480,12 @@ let rec fail supplier chkpt1 chkpt2 =
                   | [] -> (
                       (* Pop, if there is no acceptable terminals *)
                       match I.pop env2 with
-                      | None -> raise (RecoveryError ("Stack is empty", pos))
+                      | None ->
+                          Result.error (RecoveryError ("Stack is empty", pos))
                       | Some new_env ->
-                          I.loop_handle_undo success (fail supplier) supplier
-                            (I.input_needed new_env))
+                          I.loop_handle_undo success
+                            (fail (cnt + 1) supplier)
+                            supplier (I.input_needed new_env))
                   | hd :: _ ->
                       let inserted_token = terminal2token hd in
                       if I.acceptable chkpt1 inserted_token dummy_pos then
@@ -472,15 +493,17 @@ let rec fail supplier chkpt1 chkpt2 =
                         let new_env =
                           feed_terminal hd dummy_pos dummy_pos env2
                         in
-                        I.loop_handle_undo success (fail supplier) supplier
-                          (I.input_needed new_env)
+                        I.loop_handle_undo success
+                          (fail (cnt + 1) supplier)
+                          supplier (I.input_needed new_env)
                       else
-                        raise
+                        Result.error
                           (RecoveryError ("Acceptable token not found", pos))))
-          | _ -> assert false)
-      | _ -> assert false)
-  | _ -> raise (RecoveryError ("Invalid error", (dummy_pos, dummy_pos)))
+          | _ -> Result.error (RecoveryError ("Supplier is not EOF", pos)))
+      | _ ->
+          Result.error (RecoveryError ("No symbols on top of the stack", pos)))
+  | _ -> Result.error (RecoveryError ("Invalid error", (dummy_pos, dummy_pos)))
 
 let entry start lexer lexbuf =
   let supplier = I.lexer_lexbuf_to_supplier lexer lexbuf in
-  I.loop_handle_undo success (fail supplier) supplier start
+  I.loop_handle_undo success (fail 0 supplier) supplier start

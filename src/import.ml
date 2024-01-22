@@ -31,6 +31,7 @@ include struct
   module DidChangeTextDocumentParams = DidChangeTextDocumentParams
   module DidChangeWorkspaceFoldersParams = DidChangeWorkspaceFoldersParams
   module DidOpenTextDocumentParams = DidOpenTextDocumentParams
+  module DidSaveTextDocumentParams = DidSaveTextDocumentParams
   module Diff = Lsp.Diff
   module DocumentFilter = DocumentFilter
   module DocumentHighlight = DocumentHighlight

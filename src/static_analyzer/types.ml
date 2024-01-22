@@ -216,3 +216,10 @@ and rhs =
   | RhsPercentExpectRR of int_
 
 and epilogue = string_ [@@deriving show]
+
+(* For Diagnostic *)
+open Language_server.Import
+
+let diagnostics = ref []
+let append_diagnostics (d : Diagnostic.t) = diagnostics := !diagnostics @ [ d ]
+let get_diagnostics () = !diagnostics

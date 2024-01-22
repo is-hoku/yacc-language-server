@@ -5,5 +5,6 @@ module Make (Repo : Input) : Output = struct
   module Initialize = Initialize.Make (Repo)
   module DidOpen = Didopen.Make (Repo)
   module DidChange = Didchange.Make (Repo)
+  module DidSave = Didsave.Make (Repo)
   module Completion = Completion.Make (Repo)
 end
