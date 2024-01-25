@@ -1208,4 +1208,11 @@ let read_token lexbuf =
     | SC_LINE_COMMENT -> sc_line_comment lexbuf
     | SC_CHARACTER _ -> sc_character lexbuf
     | SC_STRING _ -> sc_string lexbuf
+
+let initialize () =
+    state := INITIAL;
+    bracketed_id_str := None;
+    percent_percent_count := 0;
+    context_state := INITIAL;
+    nesting := 0;
 }

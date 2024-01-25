@@ -431,7 +431,9 @@ let rec fail cnt supplier chkpt1 chkpt2 =
       let pos = (lposS, lposE) in
       match I.top env2 with
       | Some (I.Element (state2, _v, startpos, endpos)) -> (
+          (* change error recovery strategies depending on the next token *)
           match supplier () with
+          (* correct input received and currently in mid-input *)
           | Syntax.EOF, _, _ -> (
               (if cnt = 0 then
                  let message = "unexpected end of file" in

@@ -4,8 +4,9 @@ let test dir =
   Array.iter
     (fun file ->
       let fname = Filename.concat dir file in
-      print_endline (Printf.sprintf "test file: %s" fname);
+      print_endline (Printf.sprintf "\n\ntest file: %s" fname);
       let fin = open_in fname in
+      Lexer.initialize ();
       let lexbuf = Lexing.from_channel fin in
       let () =
         lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = fname }

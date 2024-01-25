@@ -1,2 +1,2 @@
-{"id":0,"jsonrpc":"2.0","result":{"capabilities":{"completionProvider":{"allCommitCharacters":[],"completionItem":{"labelDetailsSupport":true},"resolveProvider":true,"triggerCharacters":["i"],"workDoneProgress":false},"textDocumentSync":{"change":2,"openClose":true}},"serverInfo":{"name":"yacc-lsp"}}}
+{"id":0,"jsonrpc":"2.0","result":{"capabilities":{"completionProvider":{"allCommitCharacters":[],"completionItem":{"labelDetailsSupport":true},"resolveProvider":true,"triggerCharacters":["i"],"workDoneProgress":false},"textDocumentSync":{"change":2,"openClose":true,"save":true}},"serverInfo":{"name":"yacc-lsp"}}}
 {"id":1,"jsonrpc":"2.0","result":null}

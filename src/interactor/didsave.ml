@@ -33,6 +33,13 @@ module Make (Repo : Input) : Output = struct
             let uri = Text_document.documentUri d.tdoc in
             let version = Text_document.version d.tdoc in
             let diagnostics = Types.get_diagnostics () in
+            Logs.info (fun m -> m "get diagnostics");
+            List.iter
+              (fun d ->
+                Logs.info (fun m ->
+                    m "%s\n" (Yojson.Safe.to_string (Diagnostic.yojson_of_t d))))
+              diagnostics;
+            Types.flush_diagnostics ();
             let output =
               PublishDiagnosticsParams.create ~diagnostics ~uri ~version ()
             in

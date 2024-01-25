@@ -223,3 +223,4 @@ open Language_server.Import
 let diagnostics = ref []
 let append_diagnostics (d : Diagnostic.t) = diagnostics := !diagnostics @ [ d ]
 let get_diagnostics () = !diagnostics
+let flush_diagnostics () = diagnostics := []
