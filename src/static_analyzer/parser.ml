@@ -430,78 +430,73 @@ let rec fail cnt supplier chkpt1 chkpt2 =
       let lposS, lposE = I.positions env2 in
       let pos = (lposS, lposE) in
       match I.top env2 with
-      | Some (I.Element (state2, _v, startpos, endpos)) -> (
-          (* change error recovery strategies depending on the next token *)
-          match supplier () with
-          (* correct input received and currently in mid-input *)
-          | Syntax.EOF, _, _ -> (
-              (if cnt = 0 then
+      | Some (I.Element (state2, _v, _startpos, _endpos)) -> (
+          (if cnt = 0 then
+             match supplier () with
+             | Syntax.EOF, startpos, endpos ->
                  let message = "unexpected end of file" in
                  let range = get_range startpos endpos in
-                 append_diagnostics (Diagnostic.create ~message ~range ()));
-              (* production rules and index (terminal or nonterminal symbols) *)
-              let items = I.items state2 in
-              (* productions for reduce *)
-              let reductions =
+                 append_diagnostics (Diagnostic.create ~message ~range ())
+             | _ -> ());
+          (* production rules and index (terminal or nonterminal symbols) *)
+          let items = I.items state2 in
+          (* productions for reduce *)
+          let reductions =
+            List.fold_left
+              (fun acc (prod, i) ->
+                let rhs = I.rhs prod in
+                (* For example, [token_decls -> token_decl_1 .] this production can reduce to [token_decls] *)
+                if i = List.length rhs then prod :: acc else acc)
+              [] items
+          in
+          match reductions with
+          | hd :: _ ->
+              (* Reduce *)
+              let new_env = I.force_reduction hd env2 in
+              I.loop_handle_undo success
+                (fail (cnt + 1) supplier)
+                supplier (I.input_needed new_env)
+          | [] -> (
+              (* acceptable terminal symbols computed from the FIRST set *)
+              let symbols =
                 List.fold_left
                   (fun acc (prod, i) ->
                     let rhs = I.rhs prod in
-                    (* For example, [token_decls -> token_decl_1 .] this production can reduce to [token_decls] *)
-                    if i = List.length rhs then prod :: acc else acc)
+                    if i < List.length rhs then
+                      let symbol = List.nth rhs i in
+                      let first_terminals =
+                        I.foreach_terminal_but_error
+                          (fun x acc ->
+                            match x with
+                            | X (T t) ->
+                                if I.xfirst symbol t then x :: acc else acc
+                            | X (N _) -> acc)
+                          []
+                      in
+                      first_terminals
+                    else acc)
                   [] items
               in
-              match reductions with
-              | hd :: _ ->
-                  (* Reduce *)
-                  let new_env = I.force_reduction hd env2 in
-                  I.loop_handle_undo success
-                    (fail (cnt + 1) supplier)
-                    supplier (I.input_needed new_env)
+              match symbols with
               | [] -> (
-                  (* acceptable terminal symbols computed from the FIRST set *)
-                  let symbols =
-                    List.fold_left
-                      (fun acc (prod, i) ->
-                        let rhs = I.rhs prod in
-                        if i < List.length rhs then
-                          let symbol = List.nth rhs i in
-                          let first_terminals =
-                            I.foreach_terminal_but_error
-                              (fun x acc ->
-                                match x with
-                                | X (T t) ->
-                                    if I.xfirst symbol t then x :: acc else acc
-                                | X (N _) -> acc)
-                              []
-                          in
-                          first_terminals
-                        else acc)
-                      [] items
-                  in
-                  match symbols with
-                  | [] -> (
-                      (* Pop, if there is no acceptable terminals *)
-                      match I.pop env2 with
-                      | None ->
-                          Result.error (RecoveryError ("Stack is empty", pos))
-                      | Some new_env ->
-                          I.loop_handle_undo success
-                            (fail (cnt + 1) supplier)
-                            supplier (I.input_needed new_env))
-                  | hd :: _ ->
-                      let inserted_token = terminal2token hd in
-                      if I.acceptable chkpt1 inserted_token dummy_pos then
-                        (* Feed (Shift) the token *)
-                        let new_env =
-                          feed_terminal hd dummy_pos dummy_pos env2
-                        in
-                        I.loop_handle_undo success
-                          (fail (cnt + 1) supplier)
-                          supplier (I.input_needed new_env)
-                      else
-                        Result.error
-                          (RecoveryError ("Acceptable token not found", pos))))
-          | _ -> Result.error (RecoveryError ("Supplier is not EOF", pos)))
+                  (* Pop, if there is no acceptable terminals *)
+                  match I.pop env2 with
+                  | None -> Result.error (RecoveryError ("Stack is empty", pos))
+                  | Some new_env ->
+                      I.loop_handle_undo success
+                        (fail (cnt + 1) supplier)
+                        supplier (I.input_needed new_env))
+              | hd :: _ ->
+                  let inserted_token = terminal2token hd in
+                  if I.acceptable chkpt1 inserted_token dummy_pos then
+                    (* Feed (Shift) the token *)
+                    let new_env = feed_terminal hd dummy_pos dummy_pos env2 in
+                    I.loop_handle_undo success
+                      (fail (cnt + 1) supplier)
+                      supplier (I.input_needed new_env)
+                  else
+                    Result.error
+                      (RecoveryError ("Acceptable token not found", pos))))
       | _ ->
           Result.error (RecoveryError ("No symbols on top of the stack", pos)))
   | _ -> Result.error (RecoveryError ("Invalid error", (dummy_pos, dummy_pos)))
