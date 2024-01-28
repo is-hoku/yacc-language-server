@@ -4,7 +4,7 @@ open Language_server.Import
 
 exception RecoveryError of string * (position * position)
 
-module I = Syntax.MenhirInterpreter
+module I = Parser.MenhirInterpreter
 
 module Printer = struct
   open I
@@ -268,7 +268,7 @@ let print_debug_info penv state =
 
 let terminal2token xsym =
   let open I in
-  let open Syntax in
+  let open Parser in
   match xsym with
   | X (T T_PERCENT_TOKEN) -> PERCENT_TOKEN
   | X (T T_PERCENT_NTERM) -> PERCENT_NTERM
@@ -433,7 +433,7 @@ let rec fail cnt supplier chkpt1 chkpt2 =
       | Some (I.Element (state2, _v, _startpos, _endpos)) -> (
           (if cnt = 0 then
              match supplier () with
-             | Syntax.EOF, startpos, endpos ->
+             | Parser.EOF, startpos, endpos ->
                  let message = "unexpected end of file" in
                  let range = get_range startpos endpos in
                  append_diagnostics (Diagnostic.create ~message ~range ())

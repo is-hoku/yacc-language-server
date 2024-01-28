@@ -26,8 +26,8 @@ module Make (Repo : Input) : Output = struct
                 }
             in
             let _ =
-              Parser.entry
-                (Syntax.Incremental.input lexbuf.Lexing.lex_curr_p)
+              Syntax.entry
+                (Parser.Incremental.input lexbuf.Lexing.lex_curr_p)
                 Lexer.read_token lexbuf
             in
             let uri = Text_document.documentUri d.tdoc in

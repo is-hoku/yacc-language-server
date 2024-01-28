@@ -12,8 +12,8 @@ let test dir =
         lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = fname }
       in
       (match
-         Parser.entry
-           (Syntax.Incremental.input lexbuf.Lexing.lex_curr_p)
+         Syntax.entry
+           (Parser.Incremental.input lexbuf.Lexing.lex_curr_p)
            Lexer.read_token lexbuf
        with
       | Result.Ok ast -> print_string (Types.show ast)

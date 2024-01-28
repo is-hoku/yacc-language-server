@@ -1,6 +1,6 @@
 {
 open Lexing
-open Syntax
+open Parser
 open Types
 open Language_server.Import
 

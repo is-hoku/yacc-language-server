@@ -1,5 +1,5 @@
 (menhir
- (modules syntax)
+ (modules parser)
  (flags --table --inspection))
 
 (library
