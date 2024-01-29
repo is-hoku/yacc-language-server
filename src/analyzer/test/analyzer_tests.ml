@@ -1,4 +1,4 @@
-open Static_analyzer
+open Analyzer
 
 let test dir =
   Array.iter

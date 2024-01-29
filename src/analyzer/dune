@@ -3,8 +3,8 @@
  (flags --table --inspection))
 
 (library
- (name static_analyzer)
- (public_name language_server.static_analyzer)
+ (name analyzer)
+ (public_name language_server.analyzer)
  (preprocess (pps ppx_deriving.show))
  (libraries language_server menhirLib))
 

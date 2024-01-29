@@ -1,6 +1,6 @@
 open Language_server.Import
 open Lwt.Syntax
-open Static_analyzer
+open Analyzer
 
 module type Input = Repository.Document_store.S
 module type Output = Usecase.Didsave.S
