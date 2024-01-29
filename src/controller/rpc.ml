@@ -183,7 +183,7 @@ module Make (UC : Input) : Output = struct
   type notification_output = (Jsonrpc.Packet.t option * state) Lwt.t
 
   let on_notification ((notification, s) : notification_input) =
-    (* TODO: add supports for willSave, willSaveWaitUntil, and DidSave notifications *)
+    (* TODO: add supports for willSave and willSaveWaitUntil notifications *)
     let params = notification.params in
     let is_initialized = get_initialize_params s in
     (* TODO: Check client capabilities when adding methods *)

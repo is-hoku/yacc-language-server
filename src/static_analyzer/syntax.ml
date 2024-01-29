@@ -413,12 +413,12 @@ let get_range startpos endpos =
   let start =
     Position.create
       ~character:(startpos.pos_cnum - startpos.pos_bol)
-      ~line:startpos.pos_lnum
+      ~line:(startpos.pos_lnum - 1)
   in
   let end_ =
     Position.create
       ~character:(endpos.pos_cnum - endpos.pos_bol)
-      ~line:endpos.pos_lnum
+      ~line:(endpos.pos_lnum - 1)
   in
   Range.create ~end_ ~start
 

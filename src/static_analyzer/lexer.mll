@@ -41,8 +41,8 @@ let buf = Buffer.create 256
 let get_range lexbuf =
     let start_p = lexeme_start_p lexbuf in
     let end_p = lexeme_end_p lexbuf in
-    let start = Position.create ~character:(start_p.pos_cnum - start_p.pos_bol) ~line:start_p.pos_lnum in
-    let end_ = Position.create ~character:(end_p.pos_cnum - end_p.pos_bol) ~line:end_p.pos_lnum in
+    let start = Position.create ~character:(start_p.pos_cnum - start_p.pos_bol) ~line:(start_p.pos_lnum - 1) in
+    let end_ = Position.create ~character:(end_p.pos_cnum - end_p.pos_bol) ~line:(end_p.pos_lnum - 1) in
     Range.create ~end_ ~start
 
 let string_grow str =
