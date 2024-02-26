@@ -453,7 +453,7 @@ and sc_escaped_string = parse
       begin_ INITIAL;
       let message = "POSIX Yacc does not support string literals" in
       let range = get_range lexbuf in
-      append_diagnostics (Diagnostic.create ~message ~range ());
+      append_diagnostics (Diagnostic.create ~message ~range ~severity:DiagnosticSeverity.Information ());
       STRING(last_string, (startpos, lexeme_end_p lexbuf))
   }
   | eol     {
@@ -548,7 +548,7 @@ and sc_escaped_tstring = parse
       begin_ INITIAL;
       let message = "POSIX Yacc does not support string literals" in
       let range = get_range lexbuf in
-      append_diagnostics (Diagnostic.create ~message ~range ());
+      append_diagnostics (Diagnostic.create ~message ~range ~severity:DiagnosticSeverity.Information ());
       TSTRING(last_string, (startpos, lexeme_end_p lexbuf))
   }| eol     {
       unexpected_newline "\")" lexbuf;
