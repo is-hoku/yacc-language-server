@@ -1,3 +1,14 @@
+(*
+    Yacc Language Server
+
+    Copyright (C) 2002-2015, 2018-2021 Free Software Foundation, Inc.
+    Copyright (C) 2023-2024, Hoku Ishibe.
+
+    This file is a port of the Bison 3.8.1 implementation.
+    This software is released under the GNU General Public License.
+    see https://www.gnu.org/licenses/
+*)
+
 {
 open Lexing
 open Parser
